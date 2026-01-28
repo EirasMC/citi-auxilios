@@ -1,5 +1,5 @@
 import React from 'react';
-import { LogOut, User as UserIcon, Database, HardDrive } from 'lucide-react';
+import { LogOut, Database, HardDrive } from 'lucide-react';
 import { User, UserRole } from '../types';
 import { APP_NAME, PROGRAM_NAME } from '../constants';
 import { isSupabaseConnected } from '../lib/supabase';
