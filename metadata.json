@@ -1,0 +1,7 @@
+{
+  "name": "CITI Auxílios",
+  "description": "Sistema interno de gestão de auxílios para participação em eventos científicos do CITI Medicina Reprodutiva.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
