@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Layout } from './components/Layout';
+import { MainLayout } from './components/MainLayout';
 import { Login } from './components/Login';
 import { EmployeeDashboard } from './components/EmployeeDashboard';
 import { AdminDashboard } from './components/AdminDashboard';
@@ -164,7 +164,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <Layout user={currentUser} onLogout={handleLogout}>
+    <MainLayout user={currentUser} onLogout={handleLogout}>
       {!currentUser ? (
         <Login 
           onLogin={handleLogin} 
@@ -192,7 +192,7 @@ const App: React.FC = () => {
           )}
         </div>
       )}
-    </Layout>
+    </MainLayout>
   );
 };
 
