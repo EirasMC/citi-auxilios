@@ -4,7 +4,7 @@ import {
   LogOut, User as UserIcon, Database, HardDrive, Loader2, 
   Lock, Mail, ArrowRight, UserPlus, HelpCircle, CheckCircle,
   FileText, Upload, History, AlertCircle, Plus, ChevronRight, Download, Link as LinkIcon, Image as ImageIcon, Award, DollarSign, Trash2,
-  XCircle, Eye, AlertTriangle, MapPin
+  XCircle, Eye, AlertTriangle, MapPin, Info
 } from 'lucide-react';
 
 // ==========================================
@@ -190,22 +190,75 @@ export const api = {
   },
 
   async deleteRequest(id: string): Promise<void> {
-    if (isSupabaseConnected && supabase) {
+    // 1. Buscar a solicitação atual para identificar os arquivos ESPECÍFICOS desta solicitação
+    const currentRequests = await api.getRequests();
+    const reqToDelete = currentRequests.find(r => r.id === id);
+
+    if (reqToDelete && isSupabaseConnected && supabase) {
+      // 2. Coletar nomes dos arquivos (do Bucket 'documentos')
+      // Isso garante que apenas arquivos listados NESTA solicitação sejam apagados
+      const filesToDelete: string[] = [];
+      
+      const extractFileName = (url: string) => {
+        // Formato esperado: .../documentos/NOME_DO_ARQUIVO
+        const parts = url.split('/documentos/');
+        if (parts.length > 1) {
+          // Decodifica caso tenha espaços ou caracteres especiais na URL
+          return decodeURIComponent(parts[1]); 
+        }
+        return null;
+      };
+
+      // Verifica documentos iniciais da solicitação
+      if (reqToDelete.documents && Array.isArray(reqToDelete.documents)) {
+        reqToDelete.documents.forEach(doc => {
+          if (doc.url) {
+             const fileName = extractFileName(doc.url);
+             if (fileName) filesToDelete.push(fileName);
+          }
+        });
+      }
+      
+      // Verifica documentos de prestação de contas (mesmo se finalizado)
+      if (reqToDelete.accountabilityDocuments && Array.isArray(reqToDelete.accountabilityDocuments)) {
+        reqToDelete.accountabilityDocuments.forEach(doc => {
+          if (doc.url) {
+             const fileName = extractFileName(doc.url);
+             if (fileName) filesToDelete.push(fileName);
+          }
+        });
+      }
+
+      // 3. Deletar arquivos do Storage (se houver)
+      if (filesToDelete.length > 0) {
+        const { error } = await supabase.storage
+          .from('documentos')
+          .remove(filesToDelete);
+        
+        if (error) console.error("Erro ao limpar arquivos do storage:", error);
+      }
+      
+      // 4. Deletar registro do Banco de Dados
       await supabase.from('requests').delete().eq('id', id);
+
+    } else if (isSupabaseConnected && supabase) {
+        // Fallback: se não achou em memória, tenta deletar do banco direto
+        await supabase.from('requests').delete().eq('id', id);
     }
-    const current = await api.getRequests();
-    const updated = current.filter(r => r.id !== id);
+
+    // 5. Atualizar estado local
+    const updated = currentRequests.filter(r => r.id !== id);
     localStorage.setItem(LS_REQUESTS_KEY, JSON.stringify(updated));
   },
 
-  // --- NOVA FUNÇÃO DE UPLOAD ---
+  // --- FUNÇÃO DE UPLOAD ---
   async uploadFile(file: File): Promise<string> {
     if (!isSupabaseConnected || !supabase) {
       console.warn("Supabase não conectado. Simulando upload local.");
       return URL.createObjectURL(file);
     }
 
-    // Nome único para evitar sobrescrever
+    // Nome único para evitar sobrescrever e conflitos
     const sanitizedName = file.name.replace(/[^a-zA-Z0-9.]/g, '_');
     const fileName = `${Date.now()}_${sanitizedName}`;
     
@@ -665,17 +718,33 @@ interface AdminDashboardProps {
 
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users, onUpdateStatus, onDelete, onApproveReset }) => {
   const [selectedRequest, setSelectedRequest] = useState<AidRequest | null>(null);
-  
-  const StatusBadge = ({ status }: { status: RequestStatus }) => (
-    <span className={`px-2 py-1 rounded-full text-xs font-bold ${status === RequestStatus.APPROVED ? 'bg-green-100 text-green-800' : status === RequestStatus.REJECTED ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'}`}>{status}</span>
-  );
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
+  // Stats
+  const pendingCount = requests.filter(r => r.status === RequestStatus.PENDING_APPROVAL).length;
+  const accReviewCount = requests.filter(r => r.status === RequestStatus.ACCOUNTABILITY_REVIEW).length;
+  const resetRequests = users.filter(u => u.resetRequested && u.role === UserRole.EMPLOYEE);
+
+  // Helper to check for Modality II History
+  const checkForModalityIIWarning = (req: AidRequest) => {
+    if (req.modality !== Modality.II) return false;
+    
+    // Check if this user has ANY previous Modality II request that is COMPLETED, APPROVED or in ACCOUNTABILITY
+    // This implies they have used the benefit before and now must prove publication
+    const previous = requests.find(r => 
+      r.employeeId === req.employeeId && 
+      r.modality === Modality.II && 
+      r.id !== req.id &&
+      (r.status === RequestStatus.APPROVED || r.status === RequestStatus.COMPLETED || r.status === RequestStatus.ACCOUNTABILITY_REVIEW || r.status === RequestStatus.PENDING_ACCOUNTABILITY)
+    );
+    
+    return !!previous;
+  };
 
   const handleDownload = (file: SimpleFile) => {
     if (file.url) {
-       // Abre o link do bucket
        window.open(file.url, '_blank');
     } else if (file.data) {
-       // Fallback para o sistema antigo (Base64)
        const link = document.createElement('a');
        link.href = file.data;
        link.download = file.name;
@@ -687,18 +756,27 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users, onUpda
     }
   };
 
+  const StatusBadge = ({ status }: { status: RequestStatus }) => {
+    let color = 'bg-gray-100 text-gray-800';
+    if (status === RequestStatus.APPROVED) color = 'bg-green-100 text-green-800';
+    if (status === RequestStatus.REJECTED) color = 'bg-red-100 text-red-800';
+    if (status === RequestStatus.PENDING_APPROVAL) color = 'bg-yellow-100 text-yellow-800';
+    if (status === RequestStatus.COMPLETED) color = 'bg-blue-100 text-blue-800';
+    return <span className={`px-2 py-1 rounded-full text-xs font-bold uppercase ${color}`}>{status}</span>;
+  };
+
   return (
-    <div className="space-y-8 animate-fade-in">
+    <div className="space-y-8 animate-fade-in relative">
       <div className="grid grid-cols-3 gap-6">
-        {[{l: 'Pendentes', v: requests.filter(r => r.status === RequestStatus.PENDING_APPROVAL).length, c: 'border-l-yellow-400'}, {l: 'Em Análise', v: requests.filter(r => r.status === RequestStatus.ACCOUNTABILITY_REVIEW).length, c: 'border-l-blue-400'}, {l: 'Total', v: requests.length, c: 'border-l-green-400'}].map((s:any, i) => (
+        {[{l: 'Pendentes', v: pendingCount, c: 'border-l-yellow-400'}, {l: 'Em Análise', v: accReviewCount, c: 'border-l-blue-400'}, {l: 'Total', v: requests.length, c: 'border-l-green-400'}].map((s:any, i) => (
           <div key={i} className={`bg-white p-6 rounded-xl shadow-sm border ${s.c}`}><div className="text-gray-500 text-sm">{s.l}</div><div className="text-3xl font-bold">{s.v}</div></div>
         ))}
       </div>
 
-      {users.some(u => u.resetRequested) && (
+      {resetRequests.length > 0 && (
          <div className="bg-orange-50 rounded-xl border border-orange-200 p-4">
            <h2 className="font-bold text-orange-900 mb-2 flex items-center"><AlertTriangle size={16} className="mr-2"/> Resets de Senha Pendentes</h2>
-           {users.filter(u => u.resetRequested).map(u => (
+           {resetRequests.map(u => (
              <div key={u.id} className="flex justify-between items-center bg-white p-2 rounded border border-orange-100 mb-2">
                 <span className="text-sm">{u.name} ({u.email})</span>
                 <button onClick={() => onApproveReset(u.id)} className="text-xs bg-orange-600 text-white px-2 py-1 rounded">Aprovar</button>
@@ -718,7 +796,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users, onUpda
                 <td className="px-6 py-4"><StatusBadge status={req.status} /></td>
                 <td className="px-6 py-4 text-right">
                   <button onClick={() => setSelectedRequest(req)} className="text-citi-600 hover:bg-blue-50 p-1 rounded mr-2"><Eye size={18} /></button>
-                  <button onClick={() => onDelete(req.id)} className="text-red-500 hover:bg-red-50 p-1 rounded"><Trash2 size={18} /></button>
+                  <button onClick={() => setDeleteConfirmId(req.id)} className="text-red-500 hover:bg-red-50 p-1 rounded"><Trash2 size={18} /></button>
                 </td>
               </tr>
             ))}
@@ -726,10 +804,41 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users, onUpda
         </table>
       </div>
 
+      {/* Delete Confirmation Modal - Always renders if ID is set */}
+      {deleteConfirmId && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
+          <div className="bg-white rounded-lg p-6 max-w-sm w-full mx-4 shadow-xl">
+             <div className="flex flex-col items-center text-center">
+                <div className="bg-red-100 p-3 rounded-full mb-4">
+                  <AlertTriangle className="text-red-600 w-8 h-8" />
+                </div>
+                <h3 className="text-lg font-bold text-gray-900 mb-2">Confirmar Exclusão</h3>
+                <p className="text-gray-600 mb-6 text-sm">Tem certeza? Todos os arquivos anexados a esta solicitação serão apagados permanentemente do servidor.</p>
+                <div className="flex gap-3 w-full">
+                  <button onClick={() => setDeleteConfirmId(null)} className="flex-1 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium">Cancelar</button>
+                  <button onClick={() => { onDelete(deleteConfirmId); setDeleteConfirmId(null); setSelectedRequest(null); }} className="flex-1 py-2 bg-red-600 rounded-lg text-white hover:bg-red-700 font-medium">Excluir</button>
+                </div>
+             </div>
+          </div>
+        </div>
+      )}
+
       {selectedRequest && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 relative">
             <div className="flex justify-between mb-4"><h3 className="text-xl font-bold">Detalhes</h3><button onClick={() => setSelectedRequest(null)}><XCircle /></button></div>
+            
+            {/* Warning for Modality II */}
+            {selectedRequest.status === RequestStatus.PENDING_APPROVAL && checkForModalityIIWarning(selectedRequest) && (
+              <div className="mb-4 bg-yellow-50 border border-yellow-200 p-4 rounded-lg flex items-start">
+                 <AlertTriangle className="text-yellow-600 w-5 h-5 mr-3 flex-shrink-0 mt-0.5" />
+                 <div>
+                   <h4 className="font-bold text-yellow-800 text-sm">Verificação Obrigatória - Modalidade II</h4>
+                   <p className="text-yellow-700 text-sm mt-1">Este colaborador já utilizou o auxílio Modalidade II anteriormente. Verifique se o artigo científico referente ao auxílio anterior foi publicado antes de aprovar este novo pedido.</p>
+                 </div>
+              </div>
+            )}
+
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded">
                 <div><label className="text-xs text-gray-500">Solicitante</label><div className="font-bold">{selectedRequest.employeeInputName}</div></div>
@@ -737,22 +846,36 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users, onUpda
                 <div><label className="text-xs text-gray-500">Modalidade</label><div>{selectedRequest.modality}</div></div>
                 <div><label className="text-xs text-gray-500">Data</label><div>{new Date(selectedRequest.eventDate).toLocaleDateString()}</div></div>
               </div>
+              
               <div><h4 className="font-bold mb-2">Documentos</h4>
                 {selectedRequest.documents.map((d,i) => <div key={i} className="text-sm bg-gray-100 p-2 rounded mb-1 flex justify-between">{d.name} <button onClick={() => handleDownload(d)} className="text-blue-600 hover:underline flex items-center"><Download size={14} className="mr-1"/> Baixar</button></div>)}
               </div>
+              
               {selectedRequest.accountabilityDocuments.length > 0 && (
                 <div><h4 className="font-bold mb-2 text-emerald-700">Prestação de Contas</h4>
                   {selectedRequest.accountabilityDocuments.map((d,i) => <div key={i} className="text-sm bg-emerald-50 p-2 rounded mb-1 flex justify-between">{d.name} <button onClick={() => handleDownload(d)} className="text-emerald-600 hover:underline flex items-center"><Download size={14} className="mr-1"/> Baixar</button></div>)}
                 </div>
               )}
-              <div className="flex gap-2 pt-4 border-t">
+              
+              <div className="flex gap-2 pt-4 border-t items-center">
                 {selectedRequest.status === RequestStatus.PENDING_APPROVAL && (
-                  <><button onClick={() => { onUpdateStatus(selectedRequest.id, RequestStatus.APPROVED); setSelectedRequest(null); }} className="flex-1 bg-green-600 text-white py-2 rounded">Aprovar</button>
-                  <button onClick={() => { onUpdateStatus(selectedRequest.id, RequestStatus.REJECTED); setSelectedRequest(null); }} className="flex-1 bg-red-600 text-white py-2 rounded">Recusar</button></>
+                  <>
+                    <button onClick={() => { onUpdateStatus(selectedRequest.id, RequestStatus.APPROVED); setSelectedRequest(null); }} className="flex-1 bg-green-600 text-white py-2 rounded font-bold">Aprovar</button>
+                    <button onClick={() => { onUpdateStatus(selectedRequest.id, RequestStatus.REJECTED); setSelectedRequest(null); }} className="flex-1 bg-red-600 text-white py-2 rounded font-bold">Recusar</button>
+                  </>
                 )}
                 {(selectedRequest.status === RequestStatus.ACCOUNTABILITY_REVIEW) && (
-                   <button onClick={() => { onUpdateStatus(selectedRequest.id, RequestStatus.COMPLETED); setSelectedRequest(null); }} className="flex-1 bg-citi-600 text-white py-2 rounded">Aprovar Contas & Finalizar</button>
+                   <button onClick={() => { onUpdateStatus(selectedRequest.id, RequestStatus.COMPLETED); setSelectedRequest(null); }} className="flex-1 bg-citi-600 text-white py-2 rounded font-bold">Aprovar Contas & Finalizar</button>
                 )}
+                
+                {/* Delete Button inside Modal - triggers confirmation */}
+                <button 
+                  onClick={() => setDeleteConfirmId(selectedRequest.id)} 
+                  className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded ml-2" 
+                  title="Excluir Solicitação"
+                >
+                  <Trash2 size={20} />
+                </button>
               </div>
             </div>
           </div>
