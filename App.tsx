@@ -44,6 +44,8 @@ export interface SimpleFile {
   name: string;
   size: string;
   date: string;
+  url?: string; // Link real do Supabase Storage
+  data?: string; // Fallback para arquivos antigos (Base64)
 }
 
 export interface AidRequest {
@@ -78,41 +80,7 @@ export const MOCK_USER: User = {
   department: "Embriologia"
 };
 
-export const INITIAL_REQUESTS: AidRequest[] = [
-  {
-    id: "req-101",
-    employeeId: "emp-001",
-    employeeName: "Dr. João Silva",
-    employeeInputName: "João da Silva Sauro",
-    eventName: "Congresso Brasileiro de Reprodução Assistida",
-    eventLocation: "São Paulo, SP",
-    eventDate: "2024-08-15",
-    modality: Modality.I,
-    status: RequestStatus.PENDING_APPROVAL,
-    submissionDate: "2024-06-01",
-    eventParamsText: "https://evento.com.br/regras",
-    documents: [{ name: "resumo_trabalho.pdf", size: "1.2MB", date: "2024-06-01" }],
-    accountabilityDocuments: []
-  },
-  {
-    id: "req-102",
-    employeeId: "emp-002",
-    employeeName: "Dra. Maria Souza",
-    employeeInputName: "Maria Souza",
-    eventName: "ASRM Scientific Congress",
-    eventLocation: "Denver, USA",
-    eventDate: "2024-10-20",
-    modality: Modality.II,
-    status: RequestStatus.APPROVED,
-    submissionDate: "2024-05-20",
-    eventParamsText: "",
-    documents: [
-      { name: "aceite_artigo.pdf", size: "2.4MB", date: "2024-05-20" },
-      { name: "print_regras.jpg", size: "0.5MB", date: "2024-05-20" }
-    ],
-    accountabilityDocuments: []
-  }
-];
+export const INITIAL_REQUESTS: AidRequest[] = []; 
 
 export const RULES = {
   MODALITY_I: {
@@ -228,6 +196,35 @@ export const api = {
     const current = await api.getRequests();
     const updated = current.filter(r => r.id !== id);
     localStorage.setItem(LS_REQUESTS_KEY, JSON.stringify(updated));
+  },
+
+  // --- NOVA FUNÇÃO DE UPLOAD ---
+  async uploadFile(file: File): Promise<string> {
+    if (!isSupabaseConnected || !supabase) {
+      console.warn("Supabase não conectado. Simulando upload local.");
+      return URL.createObjectURL(file);
+    }
+
+    // Nome único para evitar sobrescrever
+    const sanitizedName = file.name.replace(/[^a-zA-Z0-9.]/g, '_');
+    const fileName = `${Date.now()}_${sanitizedName}`;
+    
+    // Upload para o bucket 'documentos'
+    const { data, error } = await supabase.storage
+      .from('documentos')
+      .upload(fileName, file);
+
+    if (error) {
+      console.error("Erro no upload Supabase:", error);
+      throw new Error("Falha ao enviar arquivo. Verifique se o bucket 'documentos' existe e é público.");
+    }
+
+    // Pegar URL pública
+    const { data: urlData } = supabase.storage
+      .from('documentos')
+      .getPublicUrl(fileName);
+
+    return urlData.publicUrl;
   }
 };
 
@@ -328,8 +325,7 @@ const Login: React.FC<LoginProps> = ({ onLogin, onRegister, onVerify, onRequestR
 
   const clearForm = () => { setEmail(''); setPassword(''); setName(''); setAdminPassword(''); setError(''); setSuccessMsg(''); };
   const switchTab = (tab: any) => { setActiveTab(tab); clearForm(); };
-  const handleGoogleLogin = () => onLogin(MOCK_USER);
-
+  
   const handleEmailLogin = (e: React.FormEvent) => {
     e.preventDefault();
     const result = onVerify(email, password);
@@ -378,10 +374,6 @@ const Login: React.FC<LoginProps> = ({ onLogin, onRegister, onVerify, onRequestR
         </div>
         {activeTab === 'LOGIN' && (
           <div className="space-y-4 pt-4">
-             <button onClick={handleGoogleLogin} className="w-full flex justify-center items-center py-3 px-4 border border-gray-300 rounded-lg shadow-sm bg-white text-sm font-medium text-gray-700 hover:bg-gray-50">
-              <img src="https://www.svgrepo.com/show/475656/google-color.svg" className="h-5 w-5 mr-2" alt="Google" /> Entrar com Google
-            </button>
-            <div className="relative"><div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-300" /></div><div className="relative flex justify-center text-sm"><span className="px-2 bg-white text-gray-500">Ou use seu email</span></div></div>
             <form onSubmit={handleEmailLogin} className="space-y-4">
               <div><label className="block text-sm font-medium text-gray-700">Email</label><div className="mt-1 relative rounded-md shadow-sm"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Mail className="h-5 w-5 text-gray-400" /></div><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900" /></div></div>
               <div><label className="block text-sm font-medium text-gray-700">Senha</label><div className="mt-1 relative rounded-md shadow-sm"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Lock className="h-5 w-5 text-gray-400" /></div><input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900" /></div></div>
@@ -441,6 +433,22 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
   const hasApprovedModalityI = myRequests.some(r => r.modality === Modality.I && new Date(r.submissionDate).getFullYear() === currentYear && (r.status === RequestStatus.APPROVED || r.status === RequestStatus.COMPLETED || r.status === RequestStatus.ACCOUNTABILITY_REVIEW || r.status === RequestStatus.PENDING_ACCOUNTABILITY));
   const hasApprovedModalityII = myRequests.some(r => r.modality === Modality.II && new Date(r.submissionDate).getFullYear() === currentYear && (r.status === RequestStatus.APPROVED || r.status === RequestStatus.COMPLETED || r.status === RequestStatus.ACCOUNTABILITY_REVIEW || r.status === RequestStatus.PENDING_ACCOUNTABILITY));
 
+  // Função nova de Upload (usando API)
+  const handleFileUpload = async (file: File): Promise<SimpleFile> => {
+    try {
+      const url = await api.uploadFile(file);
+      return {
+        name: file.name,
+        size: (file.size / 1024 / 1024).toFixed(2) + 'MB',
+        date: new Date().toISOString(),
+        url: url
+      };
+    } catch (e: any) {
+      alert("Erro no upload: " + e.message);
+      throw e;
+    }
+  };
+
   const Home = () => (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-fade-in">
       {[
@@ -459,6 +467,7 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
   const RequestForm = () => {
     const [formData, setFormData] = useState({ employeeInputName: '', eventName: '', eventLocation: '', eventDate: '', modality: Modality.I, eventParamsType: 'TEXT' as 'TEXT' | 'FILE', eventParamsText: '', summaryFile: null as SimpleFile | null, paramsFile: null as SimpleFile | null });
     const [dateError, setDateError] = useState<string | null>(null);
+    const [uploading, setUploading] = useState(false);
 
     useEffect(() => {
       if (formData.eventDate) {
@@ -479,10 +488,18 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
       setView('HISTORY');
     };
 
-    const handleFile = (e: React.ChangeEvent<HTMLInputElement>, type: 'summary' | 'params') => {
+    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, type: 'summary' | 'params') => {
       if (e.target.files?.[0]) {
-        const f = e.target.files[0];
-        setFormData({ ...formData, [type === 'summary' ? 'summaryFile' : 'paramsFile']: { name: (type === 'summary' ? "Resumo: " : "Params: ") + f.name, size: '1MB', date: new Date().toISOString() } });
+        setUploading(true);
+        try {
+          const file = e.target.files[0];
+          const uploaded = await handleFileUpload(file);
+          // Adiciona prefixo no nome
+          uploaded.name = (type === 'summary' ? "Resumo: " : "Params: ") + file.name;
+          setFormData({ ...formData, [type === 'summary' ? 'summaryFile' : 'paramsFile']: uploaded });
+        } finally {
+          setUploading(false);
+        }
       }
     };
 
@@ -513,14 +530,22 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
                 {dateError && <p className="text-red-600 text-xs mt-1">{dateError}</p>}
               </div>
               <div className="border-2 border-dashed rounded-lg p-4 text-center">
-                 <input required={!formData.summaryFile} type="file" className="hidden" id="sum-file" onChange={e => handleFile(e, 'summary')} disabled={isBlocked} />
-                 <label htmlFor="sum-file" className="cursor-pointer text-sm text-citi-600">{formData.summaryFile ? formData.summaryFile.name : "Upload Resumo (PDF)"}</label>
+                 <input required={!formData.summaryFile} type="file" className="hidden" id="sum-file" onChange={e => handleFileChange(e, 'summary')} disabled={isBlocked || uploading} />
+                 <label htmlFor="sum-file" className="cursor-pointer text-sm text-citi-600">
+                    {uploading ? "Enviando..." : formData.summaryFile ? formData.summaryFile.name : "Upload Resumo (PDF)"}
+                 </label>
               </div>
               <div className="bg-gray-50 p-4 rounded-lg">
                  <div className="flex gap-2 mb-2"><button type="button" onClick={() => setFormData({...formData, eventParamsType: 'TEXT'})} className="text-xs border px-2 py-1 rounded">Link/Texto</button><button type="button" onClick={() => setFormData({...formData, eventParamsType: 'FILE'})} className="text-xs border px-2 py-1 rounded">Arquivo</button></div>
-                 {formData.eventParamsType === 'TEXT' ? <input type="text" className="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Regras do evento..." value={formData.eventParamsText} onChange={e => setFormData({...formData, eventParamsText: e.target.value})} /> : <input type="file" onChange={e => handleFile(e, 'params')} className="text-sm" />}
+                 {formData.eventParamsType === 'TEXT' ? 
+                   <input type="text" className="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Regras do evento..." value={formData.eventParamsText} onChange={e => setFormData({...formData, eventParamsText: e.target.value})} /> 
+                   : <input type="file" onChange={e => handleFileChange(e, 'params')} disabled={uploading} className="text-sm" />
+                 }
+                 {uploading && formData.eventParamsType === 'FILE' && <span className="text-xs text-blue-600">Enviando...</span>}
               </div>
-              <button type="submit" disabled={isBlocked || !!dateError || !formData.employeeInputName || !formData.summaryFile} className="w-full bg-citi-600 text-white py-3 rounded-lg font-bold hover:bg-citi-700 disabled:bg-gray-300">Enviar</button>
+              <button type="submit" disabled={isBlocked || !!dateError || !formData.employeeInputName || !formData.summaryFile || uploading} className="w-full bg-citi-600 text-white py-3 rounded-lg font-bold hover:bg-citi-700 disabled:bg-gray-300">
+                 {uploading ? "Aguarde o envio..." : "Enviar"}
+              </button>
             </form>
           </div>
           <div className="bg-blue-50 p-6 rounded-xl h-fit text-sm text-gray-700 space-y-4">
@@ -537,6 +562,7 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
     const pending = myRequests.filter(r => r.status === RequestStatus.APPROVED || r.status === RequestStatus.PENDING_ACCOUNTABILITY);
     const [selectedId, setSelectedId] = useState("");
     const [files, setFiles] = useState<{part: SimpleFile|null, pres: SimpleFile|null, photo: SimpleFile|null, receipts: SimpleFile[]}>({part: null, pres: null, photo: null, receipts: []});
+    const [uploading, setUploading] = useState(false);
 
     const handleSubmit = (e: React.FormEvent) => {
       e.preventDefault();
@@ -546,14 +572,32 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
       }
     };
 
-    const handleSingle = (field: 'part'|'pres'|'photo', e: any, prefix: string) => {
-       if (e.target.files?.[0]) setFiles(p => ({...p, [field]: { name: prefix + ": " + e.target.files[0].name, size: '1MB', date: new Date().toISOString() }}));
+    const handleSingle = async (field: 'part'|'pres'|'photo', e: any, prefix: string) => {
+       if (e.target.files?.[0]) {
+         setUploading(true);
+         try {
+           const uploaded = await handleFileUpload(e.target.files[0]);
+           uploaded.name = prefix + ": " + e.target.files[0].name;
+           setFiles(p => ({...p, [field]: uploaded}));
+         } finally {
+            setUploading(false);
+         }
+       }
     };
 
-    const handleReceipts = (e: any) => {
+    const handleReceipts = async (e: any) => {
        if (e.target.files) {
-         const newFiles = Array.from(e.target.files).map((f: any) => ({ name: "Recibo: " + f.name, size: '1MB', date: new Date().toISOString() }));
-         setFiles(p => ({...p, receipts: [...p.receipts, ...newFiles]}));
+         setUploading(true);
+         try {
+           const newFiles = await Promise.all(Array.from(e.target.files).map(async (f: any) => {
+             const up = await handleFileUpload(f);
+             up.name = "Recibo: " + f.name;
+             return up;
+           }));
+           setFiles(p => ({...p, receipts: [...p.receipts, ...newFiles]}));
+         } finally {
+           setUploading(false);
+         }
        }
     };
 
@@ -571,16 +615,20 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
               {[{id:'part', lbl:'Cert. Participação'}, {id:'pres', lbl:'Cert. Apresentação'}, {id:'photo', lbl:'Foto Evento'}].map((f: any) => (
                 <div key={f.id} className="border p-4 rounded-lg text-center">
                   <label className="block text-sm font-bold mb-2">{f.lbl}</label>
-                  <input type="file" onChange={e => handleSingle(f.id, e, f.lbl)} className="text-xs" />
+                  <input type="file" onChange={e => handleSingle(f.id, e, f.lbl)} disabled={uploading} className="text-xs" />
+                  {uploading && <div className="text-xs text-citi-600 mt-1">Carregando...</div>}
                 </div>
               ))}
               <div className="border p-4 rounded-lg text-center">
                 <label className="block text-sm font-bold mb-2">Recibos/Notas</label>
-                <input type="file" multiple onChange={handleReceipts} className="text-xs" />
+                <input type="file" multiple onChange={handleReceipts} disabled={uploading} className="text-xs" />
                 <div className="text-xs mt-1 text-gray-500">{files.receipts.length} arquivos</div>
+                {uploading && <div className="text-xs text-citi-600 mt-1">Carregando...</div>}
               </div>
            </div>
-           <button type="submit" disabled={!selectedId || !files.part || !files.pres || !files.photo} className="w-full bg-emerald-600 text-white py-3 rounded-lg font-bold hover:bg-emerald-700 disabled:bg-gray-300">Enviar</button>
+           <button type="submit" disabled={!selectedId || !files.part || !files.pres || !files.photo || uploading} className="w-full bg-emerald-600 text-white py-3 rounded-lg font-bold hover:bg-emerald-700 disabled:bg-gray-300">
+             {uploading ? "Aguarde envio..." : "Enviar"}
+           </button>
         </form>
       </div>
     );
@@ -621,6 +669,23 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users, onUpda
   const StatusBadge = ({ status }: { status: RequestStatus }) => (
     <span className={`px-2 py-1 rounded-full text-xs font-bold ${status === RequestStatus.APPROVED ? 'bg-green-100 text-green-800' : status === RequestStatus.REJECTED ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'}`}>{status}</span>
   );
+
+  const handleDownload = (file: SimpleFile) => {
+    if (file.url) {
+       // Abre o link do bucket
+       window.open(file.url, '_blank');
+    } else if (file.data) {
+       // Fallback para o sistema antigo (Base64)
+       const link = document.createElement('a');
+       link.href = file.data;
+       link.download = file.name;
+       document.body.appendChild(link);
+       link.click();
+       document.body.removeChild(link);
+    } else {
+       alert("Arquivo indisponível.");
+    }
+  };
 
   return (
     <div className="space-y-8 animate-fade-in">
@@ -673,11 +738,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users, onUpda
                 <div><label className="text-xs text-gray-500">Data</label><div>{new Date(selectedRequest.eventDate).toLocaleDateString()}</div></div>
               </div>
               <div><h4 className="font-bold mb-2">Documentos</h4>
-                {selectedRequest.documents.map((d,i) => <div key={i} className="text-sm bg-gray-100 p-2 rounded mb-1 flex justify-between">{d.name} <Download size={14}/></div>)}
+                {selectedRequest.documents.map((d,i) => <div key={i} className="text-sm bg-gray-100 p-2 rounded mb-1 flex justify-between">{d.name} <button onClick={() => handleDownload(d)} className="text-blue-600 hover:underline flex items-center"><Download size={14} className="mr-1"/> Baixar</button></div>)}
               </div>
               {selectedRequest.accountabilityDocuments.length > 0 && (
                 <div><h4 className="font-bold mb-2 text-emerald-700">Prestação de Contas</h4>
-                  {selectedRequest.accountabilityDocuments.map((d,i) => <div key={i} className="text-sm bg-emerald-50 p-2 rounded mb-1 flex justify-between">{d.name} <Download size={14}/></div>)}
+                  {selectedRequest.accountabilityDocuments.map((d,i) => <div key={i} className="text-sm bg-emerald-50 p-2 rounded mb-1 flex justify-between">{d.name} <button onClick={() => handleDownload(d)} className="text-emerald-600 hover:underline flex items-center"><Download size={14} className="mr-1"/> Baixar</button></div>)}
                 </div>
               )}
               <div className="flex gap-2 pt-4 border-t">
