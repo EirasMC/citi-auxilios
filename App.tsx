@@ -8,7 +8,8 @@ import { api } from './services/api';
 import { APP_NAME, PROGRAM_NAME } from './constants';
 import { isSupabaseConnected } from './lib/supabase';
 
-// --- MAIN LAYOUT COMPONENT (Inlined to fix build resolution errors) ---
+// --- MAIN LAYOUT COMPONENT ---
+// (Inlined here to prevent 'File Not Found' errors on Netlify builds)
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -108,7 +109,7 @@ const App: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   
   const [loading, setLoading] = useState(true);
-  const [refreshTrigger, setRefreshTrigger] = useState(0); // Simple way to trigger re-fetches
+  const [refreshTrigger, setRefreshTrigger] = useState(0); 
 
   // Load Data on Mount and when Refresh is triggered
   useEffect(() => {
@@ -143,7 +144,6 @@ const App: React.FC = () => {
   };
 
   const handleRegisterUser = (name: string, email: string, pass: string): { success: boolean, message: string } => {
-    // Note: In a real async flow, we should check `users` state which is now async loaded
     const existingUser = users.find(u => u.email === email);
 
     if (existingUser) {
