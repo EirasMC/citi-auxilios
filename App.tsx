@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createClient } from '@supabase/supabase-js';
 import { 
   LogOut, User as UserIcon, Database, HardDrive, Loader2, 
   Lock, Mail, ArrowRight, UserPlus, HelpCircle, CheckCircle,
@@ -6,16 +7,235 @@ import {
   XCircle, Eye, AlertTriangle, MapPin
 } from 'lucide-react';
 
-import { User, UserRole, AidRequest, RequestStatus, SimpleFile, Modality } from './types';
-import { api } from './services/api';
-import { APP_NAME, PROGRAM_NAME, MOCK_USER, RULES } from './constants';
-import { isSupabaseConnected } from './lib/supabase';
-
 // ==========================================
-// COMPONENTES EMBUTIDOS (Para corrigir erros de importação)
+// 1. DEFINIÇÕES DE TIPOS (Inlined)
 // ==========================================
 
-// --- 1. MAIN LAYOUT ---
+export enum UserRole {
+  EMPLOYEE = 'EMPLOYEE',
+  ADMIN = 'ADMIN'
+}
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  department?: string;
+  password?: string;
+  resetRequested?: boolean;
+}
+
+export enum Modality {
+  I = 'Modalidade I',
+  II = 'Modalidade II'
+}
+
+export enum RequestStatus {
+  PENDING_APPROVAL = 'Pendente Aprovação',
+  APPROVED = 'Aprovado',
+  REJECTED = 'Recusado',
+  PENDING_ACCOUNTABILITY = 'Aguardando Prestação de Contas',
+  ACCOUNTABILITY_REVIEW = 'Análise de Contas',
+  COMPLETED = 'Finalizado'
+}
+
+export interface SimpleFile {
+  name: string;
+  size: string;
+  date: string;
+}
+
+export interface AidRequest {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  employeeInputName: string;
+  eventName: string;
+  eventLocation: string;
+  eventDate: string;
+  eventParamsText?: string;
+  modality: Modality;
+  status: RequestStatus;
+  submissionDate: string;
+  documents: SimpleFile[];
+  accountabilityDocuments: SimpleFile[];
+  rejectionReason?: string;
+}
+
+// ==========================================
+// 2. CONSTANTES (Inlined)
+// ==========================================
+
+export const APP_NAME = "CITI Medicina Reprodutiva";
+export const PROGRAM_NAME = "Programa de Auxílios";
+
+export const MOCK_USER: User = {
+  id: "emp-001",
+  name: "Dr. João Silva",
+  email: "joao.silva@citimedicina.com.br",
+  role: UserRole.EMPLOYEE,
+  department: "Embriologia"
+};
+
+export const INITIAL_REQUESTS: AidRequest[] = [
+  {
+    id: "req-101",
+    employeeId: "emp-001",
+    employeeName: "Dr. João Silva",
+    employeeInputName: "João da Silva Sauro",
+    eventName: "Congresso Brasileiro de Reprodução Assistida",
+    eventLocation: "São Paulo, SP",
+    eventDate: "2024-08-15",
+    modality: Modality.I,
+    status: RequestStatus.PENDING_APPROVAL,
+    submissionDate: "2024-06-01",
+    eventParamsText: "https://evento.com.br/regras",
+    documents: [{ name: "resumo_trabalho.pdf", size: "1.2MB", date: "2024-06-01" }],
+    accountabilityDocuments: []
+  },
+  {
+    id: "req-102",
+    employeeId: "emp-002",
+    employeeName: "Dra. Maria Souza",
+    employeeInputName: "Maria Souza",
+    eventName: "ASRM Scientific Congress",
+    eventLocation: "Denver, USA",
+    eventDate: "2024-10-20",
+    modality: Modality.II,
+    status: RequestStatus.APPROVED,
+    submissionDate: "2024-05-20",
+    eventParamsText: "",
+    documents: [
+      { name: "aceite_artigo.pdf", size: "2.4MB", date: "2024-05-20" },
+      { name: "print_regras.jpg", size: "0.5MB", date: "2024-05-20" }
+    ],
+    accountabilityDocuments: []
+  }
+];
+
+export const RULES = {
+  MODALITY_I: {
+    title: "Modalidade I",
+    description: "Apresentação de trabalhos sem perspectiva de publicação em revistas científicas.",
+    requirements: [
+      "Apresentação como autor.",
+      "Apenas um beneficiário por trabalho.",
+      "Concedido uma única vez anualmente."
+    ],
+    deadline: "15 dias de antecedência do encerramento da submissão."
+  },
+  MODALITY_II: {
+    title: "Modalidade II",
+    description: "Apresentação de trabalhos com perspectiva de publicação em revistas científicas.",
+    requirements: [
+      "Apresentação como autor.",
+      "Novo pedido só após comprovação da publicação do anterior."
+    ],
+    deadline: "15 dias de antecedência."
+  },
+  ACCOUNTABILITY: {
+    deadline: "Máximo 30 dias após o evento.",
+    refundPeriod: "Até 60 dias após o evento.",
+    documents: [
+      "Certificado de participação",
+      "Certificado de apresentação",
+      "Foto no evento",
+      "Notas fiscais (Aéreo, Hotel, Alimentação)"
+    ]
+  }
+};
+
+// ==========================================
+// 3. SUPABASE & API CLIENT (Inlined)
+// ==========================================
+
+// Supabase Setup
+const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL;
+const supabaseKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY;
+export const supabase = (supabaseUrl && supabaseKey) 
+  ? createClient(supabaseUrl, supabaseKey) 
+  : null;
+export const isSupabaseConnected = !!supabase;
+
+// API Service
+const LS_REQUESTS_KEY = 'citi_requests';
+const LS_USERS_KEY = 'citi_users';
+
+export const api = {
+  async getUsers(): Promise<User[]> {
+    if (isSupabaseConnected && supabase) {
+      const { data, error } = await supabase.from('users').select('content');
+      if (!error && data) {
+        return data.map((row: any) => row.content) as User[];
+      }
+    }
+    const saved = localStorage.getItem(LS_USERS_KEY);
+    return saved ? JSON.parse(saved) : [MOCK_USER];
+  },
+
+  async saveUser(user: User): Promise<void> {
+    if (isSupabaseConnected && supabase) {
+      const { error } = await supabase.from('users').upsert({ id: user.id, content: user });
+      if (error) console.error("Error saving user to DB:", error);
+    }
+    const current = await api.getUsers();
+    const exists = current.find(u => u.id === user.id);
+    let updated = current;
+    if (exists) {
+      updated = current.map(u => u.id === user.id ? user : u);
+    } else {
+      updated = [...current, user];
+    }
+    localStorage.setItem(LS_USERS_KEY, JSON.stringify(updated));
+  },
+
+  async updateUser(user: User): Promise<void> {
+    return api.saveUser(user);
+  },
+
+  async getRequests(): Promise<AidRequest[]> {
+    if (isSupabaseConnected && supabase) {
+      const { data, error } = await supabase.from('requests').select('content');
+      if (!error && data) {
+        return data.map((row: any) => row.content) as AidRequest[];
+      }
+    }
+    const saved = localStorage.getItem(LS_REQUESTS_KEY);
+    return saved ? JSON.parse(saved) : INITIAL_REQUESTS;
+  },
+
+  async saveRequest(req: AidRequest): Promise<void> {
+    if (isSupabaseConnected && supabase) {
+      const { error } = await supabase.from('requests').upsert({ id: req.id, content: req });
+      if (error) console.error("Error saving request to DB:", error);
+    }
+    const current = await api.getRequests();
+    const exists = current.find(r => r.id === req.id);
+    let updated = current;
+    if (exists) {
+      updated = current.map(r => r.id === req.id ? req : r);
+    } else {
+      updated = [req, ...current];
+    }
+    localStorage.setItem(LS_REQUESTS_KEY, JSON.stringify(updated));
+  },
+
+  async deleteRequest(id: string): Promise<void> {
+    if (isSupabaseConnected && supabase) {
+      await supabase.from('requests').delete().eq('id', id);
+    }
+    const current = await api.getRequests();
+    const updated = current.filter(r => r.id !== id);
+    localStorage.setItem(LS_REQUESTS_KEY, JSON.stringify(updated));
+  }
+};
+
+// ==========================================
+// 4. COMPONENTS (Inlined)
+// ==========================================
+
+// --- MAIN LAYOUT ---
 interface LayoutProps {
   children: React.ReactNode;
   user: User | null;
@@ -89,7 +309,7 @@ const MainLayout: React.FC<LayoutProps> = ({ children, user, onLogout }) => {
   );
 };
 
-// --- 2. LOGIN COMPONENT ---
+// --- LOGIN COMPONENT ---
 interface LoginProps {
   onLogin: (user: User) => void;
   onRegister: (name: string, email: string, pass: string) => { success: boolean, message: string };
@@ -206,7 +426,7 @@ const Login: React.FC<LoginProps> = ({ onLogin, onRegister, onVerify, onRequestR
   );
 };
 
-// --- 3. EMPLOYEE DASHBOARD COMPONENT ---
+// --- EMPLOYEE DASHBOARD COMPONENT ---
 interface EmployeeDashboardProps {
   requests: AidRequest[];
   employeeId: string;
@@ -386,7 +606,7 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
   return <div>{view === 'HOME' && <Home />}{view === 'REQUEST' && <RequestForm />}{view === 'ACCOUNTABILITY' && <AccountabilityView />}{view === 'HISTORY' && <HistoryView />}</div>;
 };
 
-// --- 4. ADMIN DASHBOARD COMPONENT ---
+// --- ADMIN DASHBOARD COMPONENT ---
 interface AdminDashboardProps {
   requests: AidRequest[];
   users: User[];
@@ -478,7 +698,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users, onUpda
 };
 
 // ==========================================
-// APLICAÇÃO PRINCIPAL
+// 5. APLICAÇÃO PRINCIPAL
 // ==========================================
 
 const App: React.FC = () => {
