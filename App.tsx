@@ -2,13 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { 
   LogOut, User as UserIcon, Database, HardDrive, Loader2, 
-  Lock, Mail, ArrowRight, UserPlus, HelpCircle, CheckCircle,
-  FileText, Upload, History, AlertCircle, Plus, ChevronRight, Download, Link as LinkIcon, Image as ImageIcon, Award, DollarSign, Trash2,
-  XCircle, Eye, AlertTriangle, MapPin, Info
+  Lock, Mail, UserPlus, HelpCircle, CheckCircle,
+  FileText, Upload, History, AlertCircle, Plus, ChevronRight, Download, 
+  Award, DollarSign, Trash2, XCircle, Eye, AlertTriangle, ShieldCheck, CheckSquare
 } from 'lucide-react';
 
 // ==========================================
-// 1. DEFINIÇÕES DE TIPOS (Inlined)
+// 1. DEFINIÇÕES DE TIPOS
 // ==========================================
 
 export enum UserRole {
@@ -21,7 +21,7 @@ export interface User {
   name: string;
   email: string;
   role: UserRole;
-  department?: string;
+  department?: string; // Mantido para compatibilidade
   password?: string;
   resetRequested?: boolean;
 }
@@ -33,10 +33,11 @@ export enum Modality {
 
 export enum RequestStatus {
   PENDING_APPROVAL = 'Pendente Aprovação',
-  APPROVED = 'Aprovado',
+  APPROVED = 'Aprovado', // Só vira Aprovado se Cientifico + Adm aprovarem
   REJECTED = 'Recusado',
   PENDING_ACCOUNTABILITY = 'Aguardando Prestação de Contas',
   ACCOUNTABILITY_REVIEW = 'Análise de Contas',
+  WAITING_REIMBURSEMENT = 'Aguardando Reembolso', // Nova etapa
   COMPLETED = 'Finalizado'
 }
 
@@ -44,29 +45,41 @@ export interface SimpleFile {
   name: string;
   size: string;
   date: string;
-  url?: string; // Link real do Supabase Storage
-  data?: string; // Fallback para arquivos antigos (Base64)
+  url?: string;
+  data?: string;
 }
 
 export interface AidRequest {
   id: string;
   employeeId: string;
   employeeName: string;
+  
+  // Novos campos solicitados
+  employeeJobTitle: string; // Cargo
+  registrationFee: string;  // Valor inscrição
+  
   employeeInputName: string;
   eventName: string;
   eventLocation: string;
-  eventDate: string;
+  eventDate: string; // Data limite submissão
+  
   eventParamsText?: string;
   modality: Modality;
   status: RequestStatus;
   submissionDate: string;
+  
   documents: SimpleFile[];
   accountabilityDocuments: SimpleFile[];
+  
+  // Controle de aprovação dupla
+  scientificApproved?: boolean;
+  adminApproved?: boolean;
+  
   rejectionReason?: string;
 }
 
 // ==========================================
-// 2. CONSTANTES (Inlined)
+// 2. CONSTANTES
 // ==========================================
 
 export const APP_NAME = "CITI Medicina Reprodutiva";
@@ -74,10 +87,9 @@ export const PROGRAM_NAME = "Programa de Auxílios";
 
 export const MOCK_USER: User = {
   id: "emp-001",
-  name: "Dr. João Silva",
+  name: "João Silva",
   email: "joao.silva@citimedicina.com.br",
-  role: UserRole.EMPLOYEE,
-  department: "Embriologia"
+  role: UserRole.EMPLOYEE
 };
 
 export const INITIAL_REQUESTS: AidRequest[] = []; 
@@ -85,7 +97,7 @@ export const INITIAL_REQUESTS: AidRequest[] = [];
 export const RULES = {
   MODALITY_I: {
     title: "Modalidade I",
-    description: "Apresentação de trabalhos sem perspectiva de publicação em revistas científicas.",
+    description: "Apresentação de trabalhos SEM perspectiva de publicação em revistas científicas.",
     requirements: [
       "Apresentação como autor.",
       "Apenas um beneficiário por trabalho.",
@@ -95,30 +107,34 @@ export const RULES = {
   },
   MODALITY_II: {
     title: "Modalidade II",
-    description: "Apresentação de trabalhos com perspectiva de publicação em revistas científicas.",
+    description: "Apresentação de trabalhos COM perspectiva de publicação em revistas científicas.",
     requirements: [
       "Apresentação como autor.",
-      "Novo pedido só após comprovação da publicação do anterior."
+      "Novo pedido só após comprovação da publicação do anterior.",
+      "Necessário comprovante do Comitê de Ética/Plataforma Brasil."
     ],
-    deadline: "15 dias de antecedência."
+    deadline: "15 dias de antecedência do encerramento da submissão."
   },
   ACCOUNTABILITY: {
     deadline: "Máximo 30 dias após o evento.",
     refundPeriod: "Até 60 dias após o evento.",
-    documents: [
-      "Certificado de participação",
-      "Certificado de apresentação",
-      "Foto no evento",
-      "Notas fiscais (Aéreo, Hotel, Alimentação)"
+    reimbursableItems: [
+      "Nota fiscal de passagens aéreas (com CPF).",
+      "Nota fiscal de passagens de ônibus (com CPF).",
+      "Nota fiscal de combustível (consumo 8Km/L + comprovante pedágio).",
+      "Nota fiscal de hotel (limitado a 3 dias antes/depois).",
+      "Comprovante de AirBnB (limitado a 3 dias antes/depois).",
+      "Nota fiscal de restaurantes durante o evento (com CPF).",
+      "Comprovante de inscrição do evento.",
+      "Comprovante de inscrição em curso do evento."
     ]
   }
 };
 
 // ==========================================
-// 3. SUPABASE & API CLIENT (Inlined)
+// 3. SUPABASE & API CLIENT
 // ==========================================
 
-// Supabase Setup
 const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL;
 const supabaseKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY;
 export const supabase = (supabaseUrl && supabaseKey) 
@@ -126,7 +142,6 @@ export const supabase = (supabaseUrl && supabaseKey)
   : null;
 export const isSupabaseConnected = !!supabase;
 
-// API Service
 const LS_REQUESTS_KEY = 'citi_requests';
 const LS_USERS_KEY = 'citi_users';
 
@@ -145,16 +160,11 @@ export const api = {
   async saveUser(user: User): Promise<void> {
     if (isSupabaseConnected && supabase) {
       const { error } = await supabase.from('users').upsert({ id: user.id, content: user });
-      if (error) console.error("Error saving user to DB:", error);
+      if (error) console.error("DB Error:", error);
     }
     const current = await api.getUsers();
     const exists = current.find(u => u.id === user.id);
-    let updated = current;
-    if (exists) {
-      updated = current.map(u => u.id === user.id ? user : u);
-    } else {
-      updated = [...current, user];
-    }
+    let updated = exists ? current.map(u => u.id === user.id ? user : u) : [...current, user];
     localStorage.setItem(LS_USERS_KEY, JSON.stringify(updated));
   },
 
@@ -176,116 +186,63 @@ export const api = {
   async saveRequest(req: AidRequest): Promise<void> {
     if (isSupabaseConnected && supabase) {
       const { error } = await supabase.from('requests').upsert({ id: req.id, content: req });
-      if (error) console.error("Error saving request to DB:", error);
+      if (error) console.error("DB Error:", error);
     }
     const current = await api.getRequests();
     const exists = current.find(r => r.id === req.id);
-    let updated = current;
-    if (exists) {
-      updated = current.map(r => r.id === req.id ? req : r);
-    } else {
-      updated = [req, ...current];
-    }
+    let updated = exists ? current.map(r => r.id === req.id ? req : r) : [req, ...current];
     localStorage.setItem(LS_REQUESTS_KEY, JSON.stringify(updated));
   },
 
   async deleteRequest(id: string): Promise<void> {
-    // 1. Buscar a solicitação atual para identificar os arquivos ESPECÍFICOS desta solicitação
     const currentRequests = await api.getRequests();
     const reqToDelete = currentRequests.find(r => r.id === id);
 
     if (reqToDelete && isSupabaseConnected && supabase) {
-      // 2. Coletar nomes dos arquivos (do Bucket 'documentos')
-      // Isso garante que apenas arquivos listados NESTA solicitação sejam apagados
       const filesToDelete: string[] = [];
-      
       const extractFileName = (url: string) => {
-        // Formato esperado: .../documentos/NOME_DO_ARQUIVO
         const parts = url.split('/documentos/');
-        if (parts.length > 1) {
-          // Decodifica caso tenha espaços ou caracteres especiais na URL
-          return decodeURIComponent(parts[1]); 
-        }
-        return null;
+        return parts.length > 1 ? decodeURIComponent(parts[1]) : null;
       };
-
-      // Verifica documentos iniciais da solicitação
-      if (reqToDelete.documents && Array.isArray(reqToDelete.documents)) {
-        reqToDelete.documents.forEach(doc => {
-          if (doc.url) {
-             const fileName = extractFileName(doc.url);
-             if (fileName) filesToDelete.push(fileName);
-          }
-        });
-      }
       
-      // Verifica documentos de prestação de contas (mesmo se finalizado)
-      if (reqToDelete.accountabilityDocuments && Array.isArray(reqToDelete.accountabilityDocuments)) {
-        reqToDelete.accountabilityDocuments.forEach(doc => {
-          if (doc.url) {
-             const fileName = extractFileName(doc.url);
-             if (fileName) filesToDelete.push(fileName);
-          }
-        });
-      }
+      [...(reqToDelete.documents || []), ...(reqToDelete.accountabilityDocuments || [])].forEach(doc => {
+        if (doc.url) {
+          const fn = extractFileName(doc.url);
+          if (fn) filesToDelete.push(fn);
+        }
+      });
 
-      // 3. Deletar arquivos do Storage (se houver)
       if (filesToDelete.length > 0) {
-        const { error } = await supabase.storage
-          .from('documentos')
-          .remove(filesToDelete);
-        
-        if (error) console.error("Erro ao limpar arquivos do storage:", error);
+        await supabase.storage.from('documentos').remove(filesToDelete);
       }
-      
-      // 4. Deletar registro do Banco de Dados
       await supabase.from('requests').delete().eq('id', id);
-
     } else if (isSupabaseConnected && supabase) {
-        // Fallback: se não achou em memória, tenta deletar do banco direto
         await supabase.from('requests').delete().eq('id', id);
     }
 
-    // 5. Atualizar estado local
     const updated = currentRequests.filter(r => r.id !== id);
     localStorage.setItem(LS_REQUESTS_KEY, JSON.stringify(updated));
   },
 
-  // --- FUNÇÃO DE UPLOAD ---
   async uploadFile(file: File): Promise<string> {
     if (!isSupabaseConnected || !supabase) {
-      console.warn("Supabase não conectado. Simulando upload local.");
       return URL.createObjectURL(file);
     }
-
-    // Nome único para evitar sobrescrever e conflitos
     const sanitizedName = file.name.replace(/[^a-zA-Z0-9.]/g, '_');
     const fileName = `${Date.now()}_${sanitizedName}`;
-    
-    // Upload para o bucket 'documentos'
-    const { data, error } = await supabase.storage
-      .from('documentos')
-      .upload(fileName, file);
+    const { error } = await supabase.storage.from('documentos').upload(fileName, file);
 
-    if (error) {
-      console.error("Erro no upload Supabase:", error);
-      throw new Error("Falha ao enviar arquivo. Verifique se o bucket 'documentos' existe e é público.");
-    }
+    if (error) throw new Error("Falha ao enviar arquivo.");
 
-    // Pegar URL pública
-    const { data: urlData } = supabase.storage
-      .from('documentos')
-      .getPublicUrl(fileName);
-
+    const { data: urlData } = supabase.storage.from('documentos').getPublicUrl(fileName);
     return urlData.publicUrl;
   }
 };
 
 // ==========================================
-// 4. COMPONENTS (Inlined)
+// 4. COMPONENTS
 // ==========================================
 
-// --- MAIN LAYOUT ---
 interface LayoutProps {
   children: React.ReactNode;
   user: User | null;
@@ -294,13 +251,13 @@ interface LayoutProps {
 
 const MainLayout: React.FC<LayoutProps> = ({ children, user, onLogout }) => {
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
+    <div className="min-h-screen bg-gray-50 flex flex-col font-sans text-citi-900">
       <header className="bg-white text-citi-900 shadow-sm border-b border-gray-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
           <div className="flex items-center gap-6">
             <img 
               src="/citi-logo.png" 
-              alt="CITI Medicina Reprodutiva" 
+              alt="CITI" 
               className="h-12 w-auto object-contain"
               onError={(e) => {
                 e.currentTarget.style.display = 'none';
@@ -339,17 +296,17 @@ const MainLayout: React.FC<LayoutProps> = ({ children, user, onLogout }) => {
       </main>
       <footer className="bg-white border-t border-gray-200 py-6 mt-auto">
         <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row justify-between items-center text-sm text-gray-400 gap-4">
-          <div>&copy; {new Date().getFullYear()} {APP_NAME}. Todos os direitos reservados.</div>
+          <div>&copy; {new Date().getFullYear()} {APP_NAME}.</div>
           <div className="flex items-center gap-2 text-xs bg-gray-50 px-3 py-1 rounded-full border border-gray-100">
              {isSupabaseConnected ? (
                <>
                 <Database size={12} className="text-green-500" />
-                <span className="text-green-700 font-medium">Banco Conectado (Nuvem)</span>
+                <span className="text-green-700 font-medium">Online</span>
                </>
              ) : (
                <>
                 <HardDrive size={12} className="text-orange-500" />
-                <span className="text-orange-600 font-medium">Modo Demonstração (Local)</span>
+                <span className="text-orange-600 font-medium">Offline (Demo)</span>
                </>
              )}
           </div>
@@ -396,8 +353,8 @@ const Login: React.FC<LoginProps> = ({ onLogin, onRegister, onVerify, onRequestR
   const handleResetRequest = (e: React.FormEvent) => {
     e.preventDefault();
     const sent = onRequestReset(email);
-    if (sent) { setSuccessMsg('Solicitação enviada! O administrador foi notificado.'); setError(''); }
-    else setError('E-mail não encontrado na base de dados.');
+    if (sent) { setSuccessMsg('Solicitação enviada!'); setError(''); }
+    else setError('E-mail não encontrado.');
   };
 
   const handleAdminLogin = (e: React.FormEvent) => {
@@ -416,7 +373,6 @@ const Login: React.FC<LoginProps> = ({ onLogin, onRegister, onVerify, onRequestR
         <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-citi-900 via-citi-600 to-citi-accent"></div>
         <div className="text-center pt-2">
           <h2 className="text-3xl font-bold text-citi-900">{activeTab === 'REGISTER' ? 'Criar Conta' : activeTab === 'RESET' ? 'Recuperar Senha' : 'Bem-vindo'}</h2>
-          <p className="mt-2 text-sm text-gray-600">{activeTab === 'RESET' ? 'Informe seu e-mail.' : <span>Acesse o portal do <span className="font-semibold text-citi-600">Programa de Auxílios</span>.</span>}</p>
         </div>
         <div className="flex bg-gray-100 p-1 rounded-lg">
           {['LOGIN', 'REGISTER', 'ADMIN'].map((tab) => (
@@ -428,42 +384,48 @@ const Login: React.FC<LoginProps> = ({ onLogin, onRegister, onVerify, onRequestR
         {activeTab === 'LOGIN' && (
           <div className="space-y-4 pt-4">
             <form onSubmit={handleEmailLogin} className="space-y-4">
-              <div><label className="block text-sm font-medium text-gray-700">Email</label><div className="mt-1 relative rounded-md shadow-sm"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Mail className="h-5 w-5 text-gray-400" /></div><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900" /></div></div>
-              <div><label className="block text-sm font-medium text-gray-700">Senha</label><div className="mt-1 relative rounded-md shadow-sm"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Lock className="h-5 w-5 text-gray-400" /></div><input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900" /></div></div>
+              <div><label className="block text-sm font-medium text-gray-700">Email</label><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="w-full mt-1 border rounded-lg py-3 px-3" /></div>
+              <div><label className="block text-sm font-medium text-gray-700">Senha</label><input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className="w-full mt-1 border rounded-lg py-3 px-3" /></div>
               {error && <div className="text-red-500 text-sm text-center font-medium bg-red-50 p-2 rounded">{error}</div>}
-              <button type="submit" className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-citi-600 hover:bg-citi-700 transition-colors">Entrar</button>
+              <button type="submit" className="w-full flex justify-center py-3 px-4 rounded-lg text-white bg-citi-600 hover:bg-citi-700">Entrar</button>
             </form>
-            <div className="text-center mt-2"><button onClick={() => switchTab('RESET')} className="text-sm text-citi-600 hover:underline flex items-center justify-center mx-auto"><HelpCircle size={14} className="mr-1" /> Esqueceu a senha?</button></div>
+            <div className="text-center mt-2"><button onClick={() => switchTab('RESET')} className="text-sm text-citi-600 hover:underline">Esqueceu a senha?</button></div>
           </div>
         )}
         {activeTab === 'REGISTER' && (
           <form onSubmit={handleRegister} className="space-y-4 pt-4">
-             <div><label className="block text-sm font-medium text-gray-700">Nome Completo</label><div className="mt-1 relative rounded-md shadow-sm"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><UserIcon className="h-5 w-5 text-gray-400" /></div><input type="text" required value={name} onChange={(e) => setName(e.target.value)} className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900" placeholder="Dr. Nome" /></div></div>
-             <div><label className="block text-sm font-medium text-gray-700">Email</label><div className="mt-1 relative rounded-md shadow-sm"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Mail className="h-5 w-5 text-gray-400" /></div><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900" /></div></div>
-             <div><label className="block text-sm font-medium text-gray-700">Senha</label><div className="mt-1 relative rounded-md shadow-sm"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Lock className="h-5 w-5 text-gray-400" /></div><input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900" /></div></div>
+             {/* 1º Alteração: Remover placeholder "Dr. Nome" */}
+             <div><label className="block text-sm font-medium text-gray-700">Nome Completo</label><input type="text" required value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1 border rounded-lg py-3 px-3" placeholder="Nome Sobrenome" /></div>
+             <div><label className="block text-sm font-medium text-gray-700">Email</label><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="w-full mt-1 border rounded-lg py-3 px-3" /></div>
+             <div>
+               <label className="block text-sm font-medium text-gray-700">Senha</label>
+               <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className="w-full mt-1 border rounded-lg py-3 px-3" />
+               {/* 12º Alteração: Dica de senha */}
+               <p className="text-xs text-gray-500 mt-1 flex items-center"><ShieldCheck size={12} className="mr-1"/> Crie uma senha diferente das que utiliza em outros serviços importantes. Proteja seus dados.</p>
+             </div>
              {error && <div className="text-red-500 text-sm text-center font-medium bg-red-50 p-2 rounded">{error}</div>}
-             <button type="submit" className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 transition-colors">Cadastrar</button>
+             <button type="submit" className="w-full flex justify-center py-3 px-4 rounded-lg text-white bg-green-600 hover:bg-green-700">Cadastrar</button>
           </form>
         )}
         {activeTab === 'RESET' && (
           <form onSubmit={handleResetRequest} className="space-y-6 pt-4">
              {!successMsg ? (
                <>
-                <div className="bg-blue-50 p-4 rounded-lg text-sm text-blue-800 border border-blue-200">Caso tenha perdido o acesso, o administrador precisará autorizar a criação de uma nova senha.</div>
-                <div><label className="block text-sm font-medium text-gray-700">Email</label><div className="mt-1 relative rounded-md shadow-sm"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Mail className="h-5 w-5 text-gray-400" /></div><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900" /></div></div>
-                {error && <div className="text-red-500 text-sm text-center font-medium">{error}</div>}
-                <button type="submit" className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-citi-600 hover:bg-citi-700 transition-colors">Solicitar Redefinição</button>
+                <div className="bg-blue-50 p-4 rounded-lg text-sm text-blue-800">Administrador precisará aprovar.</div>
+                <div><label className="block text-sm font-medium text-gray-700">Email</label><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="w-full mt-1 border rounded-lg py-3 px-3" /></div>
+                {error && <div className="text-red-500 text-sm text-center">{error}</div>}
+                <button type="submit" className="w-full flex justify-center py-3 px-4 rounded-lg text-white bg-citi-600">Solicitar</button>
                </>
              ) : (
-               <div className="text-center py-6"><CheckCircle className="mx-auto h-12 w-12 text-green-500 mb-4" /><h3 className="text-lg font-bold text-gray-900">Solicitação Enviada</h3><button type="button" onClick={() => switchTab('LOGIN')} className="mt-6 text-citi-600 hover:underline font-medium">Voltar para Login</button></div>
+               <div className="text-center py-6"><CheckCircle className="mx-auto h-12 w-12 text-green-500 mb-4" /><h3 className="text-lg font-bold">Enviado</h3><button type="button" onClick={() => switchTab('LOGIN')} className="mt-6 text-citi-600 hover:underline">Voltar</button></div>
              )}
           </form>
         )}
         {activeTab === 'ADMIN' && (
           <form onSubmit={handleAdminLogin} className="space-y-6 pt-4">
-            <div><label className="block text-sm font-medium text-gray-700">Senha Admin</label><div className="mt-1 relative rounded-md shadow-sm"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Lock className="h-5 w-5 text-gray-400" /></div><input type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900" /></div></div>
-            {error && <div className="text-red-500 text-sm text-center font-medium">{error}</div>}
-            <button type="submit" className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-citi-900 hover:bg-citi-800 transition-colors">Acessar Painel</button>
+            <div><label className="block text-sm font-medium text-gray-700">Senha Admin</label><input type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} className="w-full mt-1 border rounded-lg py-3 px-3" /></div>
+            {error && <div className="text-red-500 text-sm text-center">{error}</div>}
+            <button type="submit" className="w-full flex justify-center py-3 px-4 rounded-lg text-white bg-citi-900">Acessar</button>
           </form>
         )}
       </div>
@@ -483,10 +445,11 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
   const [view, setView] = useState<'HOME' | 'REQUEST' | 'ACCOUNTABILITY' | 'HISTORY'>('HOME');
   const myRequests = requests.filter(r => r.employeeId === employeeId);
   const currentYear = new Date().getFullYear();
-  const hasApprovedModalityI = myRequests.some(r => r.modality === Modality.I && new Date(r.submissionDate).getFullYear() === currentYear && (r.status === RequestStatus.APPROVED || r.status === RequestStatus.COMPLETED || r.status === RequestStatus.ACCOUNTABILITY_REVIEW || r.status === RequestStatus.PENDING_ACCOUNTABILITY));
-  const hasApprovedModalityII = myRequests.some(r => r.modality === Modality.II && new Date(r.submissionDate).getFullYear() === currentYear && (r.status === RequestStatus.APPROVED || r.status === RequestStatus.COMPLETED || r.status === RequestStatus.ACCOUNTABILITY_REVIEW || r.status === RequestStatus.PENDING_ACCOUNTABILITY));
+  
+  // Verificação de bloqueio anual
+  const hasApprovedModalityI = myRequests.some(r => r.modality === Modality.I && new Date(r.submissionDate).getFullYear() === currentYear && (r.status !== RequestStatus.REJECTED));
+  const hasApprovedModalityII = myRequests.some(r => r.modality === Modality.II && new Date(r.submissionDate).getFullYear() === currentYear && (r.status !== RequestStatus.REJECTED));
 
-  // Função nova de Upload (usando API)
   const handleFileUpload = async (file: File): Promise<SimpleFile> => {
     try {
       const url = await api.uploadFile(file);
@@ -518,7 +481,20 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
   );
 
   const RequestForm = () => {
-    const [formData, setFormData] = useState({ employeeInputName: '', eventName: '', eventLocation: '', eventDate: '', modality: Modality.I, eventParamsType: 'TEXT' as 'TEXT' | 'FILE', eventParamsText: '', summaryFile: null as SimpleFile | null, paramsFile: null as SimpleFile | null });
+    const [formData, setFormData] = useState({ 
+      employeeInputName: '', 
+      employeeJobTitle: '', // 3º Alteração: Cargo
+      eventName: '', 
+      eventLocation: '', 
+      eventDate: '', 
+      registrationFee: '', // 4º Alteração: Valor
+      modality: '' as Modality | '', 
+      eventParamsType: 'TEXT' as 'TEXT' | 'FILE', 
+      eventParamsText: '', 
+      summaryFile: null as SimpleFile | null, 
+      paramsFile: null as SimpleFile | null,
+      ethicalApprovalFile: null as SimpleFile | null // 8º Alteração: Mod II Comprovante
+    });
     const [dateError, setDateError] = useState<string | null>(null);
     const [uploading, setUploading] = useState(false);
 
@@ -531,25 +507,52 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
 
     const isBlocked = (formData.modality === Modality.I && hasApprovedModalityI) || (formData.modality === Modality.II && hasApprovedModalityII);
     
+    // 6º Alteração: Validação do campo de formato de submissão
+    const isFormatParamsFilled = formData.eventParamsType === 'TEXT' ? (formData.eventParamsText.trim().length > 0) : (!!formData.paramsFile);
+
     const handleSubmit = (e: React.FormEvent) => {
       e.preventDefault();
       if (dateError) return alert("Prazo inválido.");
+      if (!formData.modality) return alert("Selecione uma modalidade.");
+      
       const docs: SimpleFile[] = [];
       if (formData.summaryFile) docs.push(formData.summaryFile);
       if (formData.paramsFile) docs.push(formData.paramsFile);
-      onRequestSubmit({ employeeId, employeeInputName: formData.employeeInputName, eventName: formData.eventName, eventLocation: formData.eventLocation, eventDate: formData.eventDate, modality: formData.modality, eventParamsText: formData.eventParamsType === 'TEXT' ? formData.eventParamsText : undefined, documents: docs });
+      if (formData.ethicalApprovalFile) docs.push(formData.ethicalApprovalFile);
+
+      onRequestSubmit({ 
+        employeeId, 
+        employeeInputName: formData.employeeInputName, 
+        employeeJobTitle: formData.employeeJobTitle,
+        eventName: formData.eventName, 
+        eventLocation: formData.eventLocation, 
+        eventDate: formData.eventDate, 
+        registrationFee: formData.registrationFee,
+        modality: formData.modality, 
+        eventParamsText: formData.eventParamsType === 'TEXT' ? formData.eventParamsText : undefined, 
+        documents: docs 
+      });
       setView('HISTORY');
     };
 
-    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, type: 'summary' | 'params') => {
+    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, type: 'summary' | 'params' | 'ethical') => {
       if (e.target.files?.[0]) {
         setUploading(true);
         try {
           const file = e.target.files[0];
           const uploaded = await handleFileUpload(file);
-          // Adiciona prefixo no nome
-          uploaded.name = (type === 'summary' ? "Resumo: " : "Params: ") + file.name;
-          setFormData({ ...formData, [type === 'summary' ? 'summaryFile' : 'paramsFile']: uploaded });
+          
+          let prefix = "";
+          if (type === 'summary') prefix = "Resumo: ";
+          else if (type === 'params') prefix = "Regras: ";
+          else if (type === 'ethical') prefix = "Ética/Plat. Brasil: ";
+          
+          uploaded.name = prefix + file.name;
+          
+          setFormData(prev => ({ 
+            ...prev, 
+            [type === 'summary' ? 'summaryFile' : type === 'params' ? 'paramsFile' : 'ethicalApprovalFile']: uploaded 
+          }));
         } finally {
           setUploading(false);
         }
@@ -559,54 +562,102 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
     return (
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
         <div className="flex justify-between items-center mb-6 border-b pb-4"><h2 className="text-2xl font-bold text-citi-900">Nova Solicitação</h2><button onClick={() => setView('HOME')} className="text-gray-500 hover:text-citi-600">Voltar</button></div>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2">
-            <form onSubmit={handleSubmit} className="space-y-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Modalidade</label>
-                <div className="grid grid-cols-2 gap-4">
-                  {[Modality.I, Modality.II].map(m => (
-                    <button key={m} type="button" onClick={() => setFormData({...formData, modality: m})} className={`p-4 border rounded-lg text-left transition-all ${formData.modality === m ? 'border-citi-600 bg-blue-50 ring-1 ring-citi-600' : 'border-gray-200'}`}>
-                      <div className="font-bold text-citi-900">{m}</div>
-                    </button>
-                  ))}
-                </div>
+        
+        {/* 11º Alteração: Explicação das Modalidades NO TOPO */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+           <div className={`p-4 border rounded-lg cursor-pointer transition-all ${formData.modality === Modality.I ? 'border-citi-600 bg-blue-50 ring-2 ring-citi-600' : 'border-gray-200 hover:bg-gray-50'}`} onClick={() => setFormData({...formData, modality: Modality.I})}>
+              <div className="flex items-center justify-between mb-2">
+                 <h3 className="font-bold text-lg text-citi-900">{Modality.I}</h3>
+                 {formData.modality === Modality.I && <CheckCircle className="text-citi-600" size={20}/>}
               </div>
-              {isBlocked && <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded text-red-700 text-sm">Limite anual atingido para esta modalidade.</div>}
-              <input required disabled={isBlocked} type="text" className="w-full px-3 py-2 border rounded-lg" placeholder="Nome Completo" value={formData.employeeInputName} onChange={e => setFormData({...formData, employeeInputName: e.target.value})} />
-              <div className="grid grid-cols-2 gap-4">
-                 <input required disabled={isBlocked} type="text" className="w-full px-3 py-2 border rounded-lg" placeholder="Nome do Evento" value={formData.eventName} onChange={e => setFormData({...formData, eventName: e.target.value})} />
-                 <input required disabled={isBlocked} type="text" className="w-full px-3 py-2 border rounded-lg" placeholder="Local" value={formData.eventLocation} onChange={e => setFormData({...formData, eventLocation: e.target.value})} />
+              <p className="text-sm text-gray-600 mb-2">{RULES.MODALITY_I.description}</p>
+              <div className="text-xs text-gray-500 bg-white p-2 rounded border">
+                <strong>Prazo:</strong> {RULES.MODALITY_I.deadline}
               </div>
+           </div>
+
+           <div className={`p-4 border rounded-lg cursor-pointer transition-all ${formData.modality === Modality.II ? 'border-citi-600 bg-blue-50 ring-2 ring-citi-600' : 'border-gray-200 hover:bg-gray-50'}`} onClick={() => setFormData({...formData, modality: Modality.II})}>
+              <div className="flex items-center justify-between mb-2">
+                 <h3 className="font-bold text-lg text-citi-900">{Modality.II}</h3>
+                 {formData.modality === Modality.II && <CheckCircle className="text-citi-600" size={20}/>}
+              </div>
+              <p className="text-sm text-gray-600 mb-2">{RULES.MODALITY_II.description}</p>
+              <div className="text-xs text-gray-500 bg-white p-2 rounded border">
+                <strong>Prazo:</strong> {RULES.MODALITY_II.deadline}
+              </div>
+           </div>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {isBlocked && <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded text-red-700 text-sm mb-4">Limite anual atingido para esta modalidade.</div>}
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+             <input required disabled={isBlocked} type="text" className="w-full px-3 py-2 border rounded-lg" placeholder="Nome Completo" value={formData.employeeInputName} onChange={e => setFormData({...formData, employeeInputName: e.target.value})} />
+             {/* 3º Alteração: Campo Cargo */}
+             <input required disabled={isBlocked} type="text" className="w-full px-3 py-2 border rounded-lg" placeholder="Cargo na Empresa" value={formData.employeeJobTitle} onChange={e => setFormData({...formData, employeeJobTitle: e.target.value})} />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+             <input required disabled={isBlocked} type="text" className="w-full px-3 py-2 border rounded-lg" placeholder="Nome do Evento" value={formData.eventName} onChange={e => setFormData({...formData, eventName: e.target.value})} />
+             <input required disabled={isBlocked} type="text" className="w-full px-3 py-2 border rounded-lg" placeholder="Local" value={formData.eventLocation} onChange={e => setFormData({...formData, eventLocation: e.target.value})} />
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* 2º Alteração: Data intuitiva e label claro */}
               <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Data limite de submissão dos resumos</label>
                 <input required disabled={isBlocked} type="date" className={`w-full px-3 py-2 border rounded-lg ${dateError ? 'border-red-500' : ''}`} value={formData.eventDate} onChange={e => setFormData({...formData, eventDate: e.target.value})} />
                 {dateError && <p className="text-red-600 text-xs mt-1">{dateError}</p>}
               </div>
-              <div className="border-2 border-dashed rounded-lg p-4 text-center">
-                 <input required={!formData.summaryFile} type="file" className="hidden" id="sum-file" onChange={e => handleFileChange(e, 'summary')} disabled={isBlocked || uploading} />
-                 <label htmlFor="sum-file" className="cursor-pointer text-sm text-citi-600">
-                    {uploading ? "Enviando..." : formData.summaryFile ? formData.summaryFile.name : "Upload Resumo (PDF)"}
-                 </label>
+              {/* 4º Alteração: Valor Inscrição */}
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Valor da Inscrição (R$)</label>
+                <input required disabled={isBlocked} type="text" className="w-full px-3 py-2 border rounded-lg" placeholder="Ex: 500,00" value={formData.registrationFee} onChange={e => setFormData({...formData, registrationFee: e.target.value})} />
               </div>
-              <div className="bg-gray-50 p-4 rounded-lg">
-                 <div className="flex gap-2 mb-2"><button type="button" onClick={() => setFormData({...formData, eventParamsType: 'TEXT'})} className="text-xs border px-2 py-1 rounded">Link/Texto</button><button type="button" onClick={() => setFormData({...formData, eventParamsType: 'FILE'})} className="text-xs border px-2 py-1 rounded">Arquivo</button></div>
-                 {formData.eventParamsType === 'TEXT' ? 
-                   <input type="text" className="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Regras do evento..." value={formData.eventParamsText} onChange={e => setFormData({...formData, eventParamsText: e.target.value})} /> 
-                   : <input type="file" onChange={e => handleFileChange(e, 'params')} disabled={uploading} className="text-sm" />
-                 }
-                 {uploading && formData.eventParamsType === 'FILE' && <span className="text-xs text-blue-600">Enviando...</span>}
-              </div>
-              <button type="submit" disabled={isBlocked || !!dateError || !formData.employeeInputName || !formData.summaryFile || uploading} className="w-full bg-citi-600 text-white py-3 rounded-lg font-bold hover:bg-citi-700 disabled:bg-gray-300">
-                 {uploading ? "Aguarde o envio..." : "Enviar"}
-              </button>
-            </form>
           </div>
-          <div className="bg-blue-50 p-6 rounded-xl h-fit text-sm text-gray-700 space-y-4">
-             <h3 className="font-bold text-citi-900">Regras</h3>
-             <p>{formData.modality === Modality.I ? RULES.MODALITY_I.description : RULES.MODALITY_II.description}</p>
-             <p>Prazo: {formData.modality === Modality.I ? RULES.MODALITY_I.deadline : RULES.MODALITY_II.deadline}</p>
+
+          {/* 7º Alteração: Texto Resumo mais claro */}
+          <div className="border-2 border-dashed rounded-lg p-6 text-center hover:bg-gray-50 transition-colors">
+             <input required={!formData.summaryFile} type="file" className="hidden" id="sum-file" onChange={e => handleFileChange(e, 'summary')} disabled={isBlocked || uploading} />
+             <label htmlFor="sum-file" className="cursor-pointer text-sm text-citi-600 flex flex-col items-center gap-2">
+                <FileText size={24} />
+                {uploading ? "Enviando..." : formData.summaryFile ? <span className="text-green-600 font-bold">{formData.summaryFile.name}</span> : "Upload: Resumo que deseja submeter, cumprindo os parâmetros exigidos pelo evento (PDF)"}
+             </label>
           </div>
-        </div>
+          
+          {/* 8º Alteração: Campo Específico para Mod II (Ética) */}
+          {formData.modality === Modality.II && (
+             <div className="border border-blue-200 bg-blue-50 rounded-lg p-4">
+                <label className="block text-sm font-bold text-blue-900 mb-2">Comprovante de aprovação na Plataforma Brasil / Comitê de ética em pesquisa</label>
+                <input required={!formData.ethicalApprovalFile} type="file" onChange={e => handleFileChange(e, 'ethical')} disabled={uploading} className="text-sm w-full" />
+                {formData.ethicalApprovalFile && <div className="text-xs text-green-600 mt-1 font-bold">Arquivo anexado: {formData.ethicalApprovalFile.name}</div>}
+             </div>
+          )}
+
+          {/* 5º Alteração: Campo Formato de Submissão com explicação */}
+          <div className="bg-gray-50 p-6 rounded-lg border border-gray-200">
+             <label className="block text-sm font-bold text-gray-900 mb-1">Formato de submissão de trabalho exigido pelo evento</label>
+             <p className="text-xs text-gray-500 mb-3">
+               Especifique a formatação do documento, número máximo de palavras, resumo, objetivo, etc. (Geralmente consta na página do evento). 
+               Você pode colar o Link, digitar o texto, ou anexar um Print/PDF das instruções.
+             </p>
+             
+             <div className="flex gap-2 mb-3">
+                <button type="button" onClick={() => setFormData({...formData, eventParamsType: 'TEXT'})} className={`text-xs px-3 py-1 rounded border ${formData.eventParamsType === 'TEXT' ? 'bg-white font-bold border-citi-600 shadow-sm' : ''}`}>Link/Texto</button>
+                <button type="button" onClick={() => setFormData({...formData, eventParamsType: 'FILE'})} className={`text-xs px-3 py-1 rounded border ${formData.eventParamsType === 'FILE' ? 'bg-white font-bold border-citi-600 shadow-sm' : ''}`}>Arquivo/Print</button>
+             </div>
+             
+             {formData.eventParamsType === 'TEXT' ? 
+               <textarea rows={3} className="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Cole o link ou descreva as regras aqui..." value={formData.eventParamsText} onChange={e => setFormData({...formData, eventParamsText: e.target.value})} /> 
+               : <input type="file" onChange={e => handleFileChange(e, 'params')} disabled={uploading} className="text-sm w-full" />
+             }
+             {formData.eventParamsType === 'FILE' && formData.paramsFile && <div className="text-xs text-green-600 mt-1 font-bold">Arquivo anexado: {formData.paramsFile.name}</div>}
+          </div>
+
+          <button type="submit" disabled={isBlocked || !!dateError || !formData.employeeInputName || !formData.summaryFile || uploading || !isFormatParamsFilled} className="w-full bg-citi-600 text-white py-3 rounded-lg font-bold hover:bg-citi-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-all">
+             {uploading ? "Aguarde o envio..." : "Submeter Solicitação"}
+          </button>
+        </form>
       </div>
     );
   };
@@ -632,12 +683,11 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
            const uploaded = await handleFileUpload(e.target.files[0]);
            uploaded.name = prefix + ": " + e.target.files[0].name;
            setFiles(p => ({...p, [field]: uploaded}));
-         } finally {
-            setUploading(false);
-         }
+         } finally { setUploading(false); }
        }
     };
 
+    // 14º Alteração: Garantir upload multiplo (já estava ok, mas reforçado)
     const handleReceipts = async (e: any) => {
        if (e.target.files) {
          setUploading(true);
@@ -648,9 +698,7 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
              return up;
            }));
            setFiles(p => ({...p, receipts: [...p.receipts, ...newFiles]}));
-         } finally {
-           setUploading(false);
-         }
+         } finally { setUploading(false); }
        }
     };
 
@@ -659,6 +707,16 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
     return (
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 max-w-4xl mx-auto">
         <h2 className="text-2xl font-bold mb-6">Prestação de Contas</h2>
+        
+        {/* 13º Alteração: Tabela de Itens Reembolsáveis */}
+        <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-lg mb-6">
+           <h3 className="font-bold text-emerald-800 flex items-center mb-2"><DollarSign size={16} className="mr-1"/> Itens Passíveis de Reembolso</h3>
+           <ul className="text-xs text-emerald-900 list-disc pl-5 space-y-1">
+              {RULES.ACCOUNTABILITY.reimbursableItems.map((item, i) => <li key={i}>{item}</li>)}
+              <li>Outros comprovantes combinados previamente com a Coordenação.</li>
+           </ul>
+        </div>
+
         <form onSubmit={handleSubmit} className="space-y-6">
            <select className="w-full px-3 py-3 border rounded-lg" value={selectedId} onChange={e => setSelectedId(e.target.value)} required>
              <option value="">Selecione o Auxílio...</option>
@@ -673,14 +731,14 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
                 </div>
               ))}
               <div className="border p-4 rounded-lg text-center">
-                <label className="block text-sm font-bold mb-2">Recibos/Notas</label>
+                <label className="block text-sm font-bold mb-2">Recibos/Notas (Múltiplos)</label>
                 <input type="file" multiple onChange={handleReceipts} disabled={uploading} className="text-xs" />
                 <div className="text-xs mt-1 text-gray-500">{files.receipts.length} arquivos</div>
                 {uploading && <div className="text-xs text-citi-600 mt-1">Carregando...</div>}
               </div>
            </div>
            <button type="submit" disabled={!selectedId || !files.part || !files.pres || !files.photo || uploading} className="w-full bg-emerald-600 text-white py-3 rounded-lg font-bold hover:bg-emerald-700 disabled:bg-gray-300">
-             {uploading ? "Aguarde envio..." : "Enviar"}
+             {uploading ? "Aguarde envio..." : "Enviar Prestação de Contas"}
            </button>
         </form>
       </div>
@@ -694,9 +752,12 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
          {myRequests.map(req => (
            <div key={req.id} className="bg-white p-6 rounded-xl shadow-sm border flex justify-between items-center">
              <div>
-               <span className={`px-2 py-1 rounded text-xs font-bold ${req.status === RequestStatus.APPROVED ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>{req.status}</span>
-               <h3 className="font-bold text-lg mt-1">{req.eventName}</h3>
-               <p className="text-sm text-gray-600">{req.modality} - {new Date(req.eventDate).toLocaleDateString()}</p>
+               <div className="flex gap-2 mb-1">
+                 <span className={`px-2 py-1 rounded text-xs font-bold ${req.status.includes('Aprovado') || req.status === RequestStatus.COMPLETED ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>{req.status}</span>
+                 {req.modality === Modality.II && <span className="px-2 py-1 rounded text-xs font-bold bg-blue-100 text-blue-800">Mod. II</span>}
+               </div>
+               <h3 className="font-bold text-lg">{req.eventName}</h3>
+               <p className="text-sm text-gray-600">{new Date(req.eventDate).toLocaleDateString()} - {req.employeeJobTitle}</p>
              </div>
            </div>
          ))}
@@ -711,7 +772,7 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
 interface AdminDashboardProps {
   requests: AidRequest[];
   users: User[];
-  onUpdateStatus: (id: string, status: RequestStatus, reason?: string) => void;
+  onUpdateStatus: (id: string, status: RequestStatus, updates?: Partial<AidRequest>) => void;
   onDelete: (id: string) => void;
   onApproveReset: (userId: string) => void;
 }
@@ -720,40 +781,30 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users, onUpda
   const [selectedRequest, setSelectedRequest] = useState<AidRequest | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
-  // Stats
   const pendingCount = requests.filter(r => r.status === RequestStatus.PENDING_APPROVAL).length;
   const accReviewCount = requests.filter(r => r.status === RequestStatus.ACCOUNTABILITY_REVIEW).length;
+  // 10º Alteração: Contar processos aguardando reembolso
+  const refundCount = requests.filter(r => r.status === RequestStatus.WAITING_REIMBURSEMENT).length;
+  
   const resetRequests = users.filter(u => u.resetRequested && u.role === UserRole.EMPLOYEE);
 
-  // Helper to check for Modality II History
   const checkForModalityIIWarning = (req: AidRequest) => {
     if (req.modality !== Modality.II) return false;
-    
-    // Check if this user has ANY previous Modality II request that is COMPLETED, APPROVED or in ACCOUNTABILITY
-    // This implies they have used the benefit before and now must prove publication
     const previous = requests.find(r => 
       r.employeeId === req.employeeId && 
       r.modality === Modality.II && 
       r.id !== req.id &&
-      (r.status === RequestStatus.APPROVED || r.status === RequestStatus.COMPLETED || r.status === RequestStatus.ACCOUNTABILITY_REVIEW || r.status === RequestStatus.PENDING_ACCOUNTABILITY)
+      (r.status === RequestStatus.APPROVED || r.status === RequestStatus.COMPLETED || r.status === RequestStatus.ACCOUNTABILITY_REVIEW || r.status === RequestStatus.WAITING_REIMBURSEMENT)
     );
-    
     return !!previous;
   };
 
   const handleDownload = (file: SimpleFile) => {
-    if (file.url) {
-       window.open(file.url, '_blank');
-    } else if (file.data) {
-       const link = document.createElement('a');
-       link.href = file.data;
-       link.download = file.name;
-       document.body.appendChild(link);
-       link.click();
-       document.body.removeChild(link);
-    } else {
-       alert("Arquivo indisponível.");
-    }
+    if (file.url) window.open(file.url, '_blank');
+    else if (file.data) {
+       const link = document.createElement('a'); link.href = file.data; link.download = file.name;
+       document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    } else alert("Arquivo indisponível.");
   };
 
   const StatusBadge = ({ status }: { status: RequestStatus }) => {
@@ -761,14 +812,36 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users, onUpda
     if (status === RequestStatus.APPROVED) color = 'bg-green-100 text-green-800';
     if (status === RequestStatus.REJECTED) color = 'bg-red-100 text-red-800';
     if (status === RequestStatus.PENDING_APPROVAL) color = 'bg-yellow-100 text-yellow-800';
+    if (status === RequestStatus.WAITING_REIMBURSEMENT) color = 'bg-orange-100 text-orange-800';
     if (status === RequestStatus.COMPLETED) color = 'bg-blue-100 text-blue-800';
     return <span className={`px-2 py-1 rounded-full text-xs font-bold uppercase ${color}`}>{status}</span>;
   };
 
+  // 9º Alteração: Lógica de Aprovação Dupla
+  const handleApproval = (type: 'SCIENTIFIC' | 'ADMIN') => {
+    if (!selectedRequest) return;
+    const updates: Partial<AidRequest> = {};
+    
+    let isSci = selectedRequest.scientificApproved;
+    let isAdmin = selectedRequest.adminApproved;
+
+    if (type === 'SCIENTIFIC') { isSci = true; updates.scientificApproved = true; }
+    if (type === 'ADMIN') { isAdmin = true; updates.adminApproved = true; }
+
+    if (isSci && isAdmin) {
+      onUpdateStatus(selectedRequest.id, RequestStatus.APPROVED, updates);
+      setSelectedRequest(null);
+    } else {
+      // Atualiza apenas as flags, mas mantém status Pendente
+      onUpdateStatus(selectedRequest.id, RequestStatus.PENDING_APPROVAL, updates);
+      setSelectedRequest(prev => prev ? ({...prev, ...updates}) : null);
+    }
+  };
+
   return (
     <div className="space-y-8 animate-fade-in relative">
-      <div className="grid grid-cols-3 gap-6">
-        {[{l: 'Pendentes', v: pendingCount, c: 'border-l-yellow-400'}, {l: 'Em Análise', v: accReviewCount, c: 'border-l-blue-400'}, {l: 'Total', v: requests.length, c: 'border-l-green-400'}].map((s:any, i) => (
+      <div className="grid grid-cols-4 gap-4">
+        {[{l: 'Pendentes', v: pendingCount, c: 'border-l-yellow-400'}, {l: 'Em Análise', v: accReviewCount, c: 'border-l-blue-400'}, {l: 'Reembolso', v: refundCount, c: 'border-l-orange-400'}, {l: 'Total', v: requests.length, c: 'border-l-green-400'}].map((s:any, i) => (
           <div key={i} className={`bg-white p-6 rounded-xl shadow-sm border ${s.c}`}><div className="text-gray-500 text-sm">{s.l}</div><div className="text-3xl font-bold">{s.v}</div></div>
         ))}
       </div>
@@ -791,7 +864,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users, onUpda
           <tbody className="divide-y">
             {requests.map(req => (
               <tr key={req.id}>
-                <td className="px-6 py-4">{req.employeeInputName}</td>
+                <td className="px-6 py-4">
+                  <div className="font-medium">{req.employeeInputName}</div>
+                  <div className="text-xs text-gray-500">{req.employeeJobTitle}</div>
+                </td>
                 <td className="px-6 py-4">{req.eventName}</td>
                 <td className="px-6 py-4"><StatusBadge status={req.status} /></td>
                 <td className="px-6 py-4 text-right">
@@ -804,20 +880,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users, onUpda
         </table>
       </div>
 
-      {/* Delete Confirmation Modal - Always renders if ID is set */}
       {deleteConfirmId && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
-          <div className="bg-white rounded-lg p-6 max-w-sm w-full mx-4 shadow-xl">
-             <div className="flex flex-col items-center text-center">
-                <div className="bg-red-100 p-3 rounded-full mb-4">
-                  <AlertTriangle className="text-red-600 w-8 h-8" />
-                </div>
-                <h3 className="text-lg font-bold text-gray-900 mb-2">Confirmar Exclusão</h3>
-                <p className="text-gray-600 mb-6 text-sm">Tem certeza? Todos os arquivos anexados a esta solicitação serão apagados permanentemente do servidor.</p>
-                <div className="flex gap-3 w-full">
-                  <button onClick={() => setDeleteConfirmId(null)} className="flex-1 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium">Cancelar</button>
-                  <button onClick={() => { onDelete(deleteConfirmId); setDeleteConfirmId(null); setSelectedRequest(null); }} className="flex-1 py-2 bg-red-600 rounded-lg text-white hover:bg-red-700 font-medium">Excluir</button>
-                </div>
+          <div className="bg-white rounded-lg p-6 max-w-sm w-full mx-4 shadow-xl text-center">
+             <h3 className="text-lg font-bold text-gray-900 mb-2">Confirmar Exclusão</h3>
+             <p className="text-gray-600 mb-6 text-sm">Essa ação removerá arquivos e dados permanentemente.</p>
+             <div className="flex gap-3">
+               <button onClick={() => setDeleteConfirmId(null)} className="flex-1 py-2 border rounded-lg">Cancelar</button>
+               <button onClick={() => { onDelete(deleteConfirmId); setDeleteConfirmId(null); setSelectedRequest(null); }} className="flex-1 py-2 bg-red-600 rounded-lg text-white">Excluir</button>
              </div>
           </div>
         </div>
@@ -826,28 +896,26 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users, onUpda
       {selectedRequest && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 relative">
-            <div className="flex justify-between mb-4"><h3 className="text-xl font-bold">Detalhes</h3><button onClick={() => setSelectedRequest(null)}><XCircle /></button></div>
+            <div className="flex justify-between mb-4"><h3 className="text-xl font-bold">Detalhes da Solicitação</h3><button onClick={() => setSelectedRequest(null)}><XCircle /></button></div>
             
-            {/* Warning for Modality II */}
             {selectedRequest.status === RequestStatus.PENDING_APPROVAL && checkForModalityIIWarning(selectedRequest) && (
               <div className="mb-4 bg-yellow-50 border border-yellow-200 p-4 rounded-lg flex items-start">
                  <AlertTriangle className="text-yellow-600 w-5 h-5 mr-3 flex-shrink-0 mt-0.5" />
-                 <div>
-                   <h4 className="font-bold text-yellow-800 text-sm">Verificação Obrigatória - Modalidade II</h4>
-                   <p className="text-yellow-700 text-sm mt-1">Este colaborador já utilizou o auxílio Modalidade II anteriormente. Verifique se o artigo científico referente ao auxílio anterior foi publicado antes de aprovar este novo pedido.</p>
-                 </div>
+                 <div><h4 className="font-bold text-yellow-800 text-sm">Verificação Obrigatória - Modalidade II</h4><p className="text-yellow-700 text-sm mt-1">Verifique se o artigo científico anterior foi publicado.</p></div>
               </div>
             )}
 
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded">
                 <div><label className="text-xs text-gray-500">Solicitante</label><div className="font-bold">{selectedRequest.employeeInputName}</div></div>
+                <div><label className="text-xs text-gray-500">Cargo</label><div className="font-bold">{selectedRequest.employeeJobTitle}</div></div>
                 <div><label className="text-xs text-gray-500">Evento</label><div className="font-bold">{selectedRequest.eventName}</div></div>
+                <div><label className="text-xs text-gray-500">Data Limite</label><div>{new Date(selectedRequest.eventDate).toLocaleDateString()}</div></div>
+                <div><label className="text-xs text-gray-500">Valor Inscrição</label><div className="font-bold">R$ {selectedRequest.registrationFee}</div></div>
                 <div><label className="text-xs text-gray-500">Modalidade</label><div>{selectedRequest.modality}</div></div>
-                <div><label className="text-xs text-gray-500">Data</label><div>{new Date(selectedRequest.eventDate).toLocaleDateString()}</div></div>
               </div>
               
-              <div><h4 className="font-bold mb-2">Documentos</h4>
+              <div><h4 className="font-bold mb-2">Documentos de Solicitação</h4>
                 {selectedRequest.documents.map((d,i) => <div key={i} className="text-sm bg-gray-100 p-2 rounded mb-1 flex justify-between">{d.name} <button onClick={() => handleDownload(d)} className="text-blue-600 hover:underline flex items-center"><Download size={14} className="mr-1"/> Baixar</button></div>)}
               </div>
               
@@ -857,25 +925,42 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users, onUpda
                 </div>
               )}
               
-              <div className="flex gap-2 pt-4 border-t items-center">
+              <div className="flex gap-2 pt-4 border-t flex-col">
                 {selectedRequest.status === RequestStatus.PENDING_APPROVAL && (
-                  <>
-                    <button onClick={() => { onUpdateStatus(selectedRequest.id, RequestStatus.APPROVED); setSelectedRequest(null); }} className="flex-1 bg-green-600 text-white py-2 rounded font-bold">Aprovar</button>
-                    <button onClick={() => { onUpdateStatus(selectedRequest.id, RequestStatus.REJECTED); setSelectedRequest(null); }} className="flex-1 bg-red-600 text-white py-2 rounded font-bold">Recusar</button>
-                  </>
+                  <div className="flex gap-2">
+                     {/* 9º Alteração: Botões separados de aprovação */}
+                     <button 
+                       onClick={() => handleApproval('SCIENTIFIC')} 
+                       disabled={selectedRequest.scientificApproved}
+                       className={`flex-1 py-3 rounded font-bold flex items-center justify-center ${selectedRequest.scientificApproved ? 'bg-green-100 text-green-800 border border-green-200' : 'bg-citi-600 text-white hover:bg-citi-700'}`}
+                     >
+                       {selectedRequest.scientificApproved ? <><CheckCircle size={16} className="mr-2"/> Aprovado (Científico)</> : "Aprovar (Científico)"}
+                     </button>
+                     
+                     <button 
+                       onClick={() => handleApproval('ADMIN')} 
+                       disabled={selectedRequest.adminApproved}
+                       className={`flex-1 py-3 rounded font-bold flex items-center justify-center ${selectedRequest.adminApproved ? 'bg-green-100 text-green-800 border border-green-200' : 'bg-citi-900 text-white hover:bg-citi-800'}`}
+                     >
+                       {selectedRequest.adminApproved ? <><CheckCircle size={16} className="mr-2"/> Aprovado (Admin)</> : "Aprovar (Admin)"}
+                     </button>
+
+                     <button onClick={() => { onUpdateStatus(selectedRequest.id, RequestStatus.REJECTED); setSelectedRequest(null); }} className="px-4 bg-red-100 text-red-700 hover:bg-red-200 rounded font-bold">Recusar</button>
+                  </div>
                 )}
+
+                {/* 10º Alteração: Fluxo de Reembolso */}
                 {(selectedRequest.status === RequestStatus.ACCOUNTABILITY_REVIEW) && (
-                   <button onClick={() => { onUpdateStatus(selectedRequest.id, RequestStatus.COMPLETED); setSelectedRequest(null); }} className="flex-1 bg-citi-600 text-white py-2 rounded font-bold">Aprovar Contas & Finalizar</button>
+                   <button onClick={() => { onUpdateStatus(selectedRequest.id, RequestStatus.WAITING_REIMBURSEMENT); setSelectedRequest(null); }} className="w-full bg-emerald-600 text-white py-3 rounded font-bold hover:bg-emerald-700">
+                      Aprovar Contas & Aguardar Reembolso
+                   </button>
                 )}
                 
-                {/* Delete Button inside Modal - triggers confirmation */}
-                <button 
-                  onClick={() => setDeleteConfirmId(selectedRequest.id)} 
-                  className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded ml-2" 
-                  title="Excluir Solicitação"
-                >
-                  <Trash2 size={20} />
-                </button>
+                {(selectedRequest.status === RequestStatus.WAITING_REIMBURSEMENT) && (
+                   <button onClick={() => { onUpdateStatus(selectedRequest.id, RequestStatus.COMPLETED); setSelectedRequest(null); }} className="w-full bg-blue-600 text-white py-3 rounded font-bold hover:bg-blue-700">
+                      <DollarSign className="inline mr-2"/> Confirmar Realização do Reembolso (Finalizar)
+                   </button>
+                )}
               </div>
             </div>
           </div>
@@ -924,7 +1009,7 @@ const App: React.FC = () => {
       }
       return { success: false, message: 'Este e-mail já está cadastrado.' };
     }
-    const newUser: User = { id: `emp-${Date.now()}`, name, email, role: UserRole.EMPLOYEE, password: pass, department: 'Geral' };
+    const newUser: User = { id: `emp-${Date.now()}`, name, email, role: UserRole.EMPLOYEE, password: pass };
     api.saveUser(newUser).then(refreshData);
     setCurrentUser(newUser);
     return { success: true, message: 'Cadastro realizado com sucesso!' };
@@ -947,12 +1032,20 @@ const App: React.FC = () => {
 
   const handleAdminResetApprove = (userId: string) => {
     const user = users.find(u => u.id === userId);
-    if (user) api.saveUser({ ...user, password: '', resetRequested: false }).then(() => { refreshData(); alert("Redefinição aprovada."); });
+    if (user) api.saveUser({ ...user, password: '', resetRequested: false }).then(refreshData);
   };
 
   const handleNewRequest = (newReqData: any) => {
-    api.saveRequest({ ...newReqData, id: `req-${Date.now()}`, status: RequestStatus.PENDING_APPROVAL, submissionDate: new Date().toISOString(), accountabilityDocuments: [], employeeName: currentUser?.name || 'Unknown' })
-       .then(() => { refreshData(); alert("Enviado com sucesso!"); });
+    api.saveRequest({ 
+      ...newReqData, 
+      id: `req-${Date.now()}`, 
+      status: RequestStatus.PENDING_APPROVAL, 
+      submissionDate: new Date().toISOString(), 
+      accountabilityDocuments: [], 
+      employeeName: currentUser?.name || 'Unknown',
+      scientificApproved: false,
+      adminApproved: false
+    }).then(() => { refreshData(); alert("Enviado com sucesso!"); });
   };
 
   const handleAccountabilitySubmit = (reqId: string, docs: SimpleFile[]) => {
@@ -960,9 +1053,9 @@ const App: React.FC = () => {
     if (req) api.saveRequest({ ...req, status: RequestStatus.ACCOUNTABILITY_REVIEW, accountabilityDocuments: docs }).then(() => { refreshData(); alert("Contas enviadas!"); });
   };
 
-  const handleAdminStatusUpdate = (id: string, newStatus: RequestStatus) => {
+  const handleAdminStatusUpdate = (id: string, newStatus: RequestStatus, updates: Partial<AidRequest> = {}) => {
     const req = requests.find(r => r.id === id);
-    if (req) api.saveRequest({ ...req, status: newStatus }).then(refreshData);
+    if (req) api.saveRequest({ ...req, ...updates, status: newStatus }).then(refreshData);
   };
 
   const handleDeleteRequest = (id: string) => api.deleteRequest(id).then(refreshData);
