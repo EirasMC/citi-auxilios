@@ -65,11 +65,11 @@ export interface AidRequest {
   employeeId: string;
   employeeName: string;
   employeeInputName: string;
-  jobRole: string;           // Novo campo: Cargo
+  jobRole: string;           
   eventName: string;
   eventLocation: string;
   eventDate: string;
-  registrationValue: string; // Novo campo: Valor Inscrição
+  registrationValue: string; 
   eventParamsText?: string;
   modality: Modality;
   status: RequestStatus;
@@ -80,7 +80,7 @@ export interface AidRequest {
   adminApproved?: boolean;
 
   documents: SimpleFile[];
-  ethicsCommitteeProof?: SimpleFile; // Novo campo: Comprovante Ética (Mod II)
+  ethicsCommitteeProof?: SimpleFile; 
 
   accountabilityDocuments: SimpleFile[];
   rejectionReason?: string;
@@ -248,7 +248,6 @@ export const api = {
 
   async uploadFile(file: File): Promise<string> {
     if (!isSupabaseConnected || !supabase) {
-      //console.warn("Supabase não conectado. Simulando upload local.");
       return URL.createObjectURL(file);
     }
     const sanitizedName = file.name.replace(/[^a-zA-Z0-9.]/g, '_');
@@ -263,7 +262,6 @@ export const api = {
     const adminEmails = ["eirasmc@gmail.com", "edson.takitani@citimedicinareprodutiva.com.br"];
     
     if (EMAILJS_CONFIG.SERVICE_ID === 'service_xxxx') {
-        // console.warn('EmailJS não configurado.');
         return;
     }
 
@@ -280,8 +278,6 @@ export const api = {
       }
     };
 
-    // Envia para o usuário E para os admins (copia)
-    // Remove duplicatas caso o usuário seja um dos admins
     const uniqueRecipients = Array.from(new Set([to, ...adminEmails]));
     await Promise.all(uniqueRecipients.map(email => sendTo(email)));
   }
