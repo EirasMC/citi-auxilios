@@ -1,4 +1,3 @@
-
 import { AidRequest, Modality, RequestStatus, User, UserRole } from "./types";
 
 export const APP_NAME = "CITI Medicina Reprodutiva";
@@ -6,13 +5,47 @@ export const PROGRAM_NAME = "Programa de Auxílios";
 
 export const MOCK_USER: User = {
   id: "emp-001",
-  name: "João Silva",
+  name: "Dr. João Silva",
   email: "joao.silva@citimedicina.com.br",
   role: UserRole.EMPLOYEE,
   department: "Embriologia"
 };
 
-export const INITIAL_REQUESTS: AidRequest[] = [];
+export const INITIAL_REQUESTS: AidRequest[] = [
+  {
+    id: "req-101",
+    employeeId: "emp-001",
+    employeeName: "Dr. João Silva",
+    employeeInputName: "João da Silva Sauro",
+    eventName: "Congresso Brasileiro de Reprodução Assistida",
+    eventLocation: "São Paulo, SP",
+    eventDate: "2024-08-15",
+    modality: Modality.I,
+    status: RequestStatus.PENDING_APPROVAL,
+    submissionDate: "2024-06-01",
+    eventParamsText: "https://evento.com.br/regras",
+    documents: [{ name: "resumo_trabalho.pdf", size: "1.2MB", date: "2024-06-01" }],
+    accountabilityDocuments: []
+  },
+  {
+    id: "req-102",
+    employeeId: "emp-002",
+    employeeName: "Dra. Maria Souza",
+    employeeInputName: "Maria Souza",
+    eventName: "ASRM Scientific Congress",
+    eventLocation: "Denver, USA",
+    eventDate: "2024-10-20",
+    modality: Modality.II,
+    status: RequestStatus.APPROVED,
+    submissionDate: "2024-05-20",
+    eventParamsText: "",
+    documents: [
+      { name: "aceite_artigo.pdf", size: "2.4MB", date: "2024-05-20" },
+      { name: "print_regras.jpg", size: "0.5MB", date: "2024-05-20" }
+    ],
+    accountabilityDocuments: []
+  }
+];
 
 export const RULES = {
   MODALITY_I: {
@@ -34,18 +67,6 @@ export const RULES = {
     ],
     deadline: "15 dias de antecedência."
   },
-  REIMBURSABLE_ITEMS: [
-    "Nota fiscal de passagens aéreas, com o número do CPF do beneficiário.",
-    "Nota fiscal de passagens de ônibus, com o número do CPF do beneficiário.",
-    "Nota fiscal de posto de combustível (Consumo 8Km/L), com o CPF do beneficiário.",
-    "Comprovante de praça de pedágio do dia e do percurso da viagem.",
-    "Nota fiscal de hotel da cidade do evento (limite 3 dias antes/depois).",
-    "Comprovante de hospedagem em AirBnB (limite 3 dias antes/depois).",
-    "Nota fiscal de restaurantes do período, com o CPF do beneficiário.",
-    "Comprovante de inscrição do evento no nome do beneficiário.",
-    "Comprovante de inscrição em curso do evento no nome do beneficiário.",
-    "Outros comprovantes combinados previamente com a Coordenação."
-  ],
   ACCOUNTABILITY: {
     deadline: "Máximo 30 dias após o evento.",
     refundPeriod: "Até 60 dias após o evento.",
@@ -53,7 +74,7 @@ export const RULES = {
       "Certificado de participação",
       "Certificado de apresentação",
       "Foto no evento",
-      "Notas fiscais"
+      "Notas fiscais (Aéreo, Hotel, Alimentação)"
     ]
   }
 };
