@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import emailjs from '@emailjs/browser';
@@ -7,6 +8,15 @@ import {
   FileText, Upload, History, AlertCircle, Plus, ChevronRight, Download, Link as LinkIcon, Image as ImageIcon, Award, DollarSign, Trash2,
   XCircle, Eye, AlertTriangle, MapPin, Info, Calendar
 } from 'lucide-react';
+
+// ==========================================
+// CONFIGURAÇÃO EMAILJS (PREENCHA AQUI)
+// ==========================================
+const EMAILJS_CONFIG = {
+  SERVICE_ID: 'service_xxxx',   // Seu Service ID
+  TEMPLATE_ID: 'template_xxxx', // Seu Template ID
+  PUBLIC_KEY: 'xxxx_xxxx_xxxx'  // Sua Public Key
+};
 
 // ==========================================
 // 1. DEFINIÇÕES DE TIPOS & CONSTANTES
