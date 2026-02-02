@@ -9,15 +9,6 @@ import {
 } from 'lucide-react';
 
 // ==========================================
-// CONFIGURAÇÃO EMAILJS (PREENCHA AQUI)
-// ==========================================
-const EMAILJS_CONFIG = {
-  SERVICE_ID: 'service_xxxx',   // Seu Service ID
-  TEMPLATE_ID: 'template_xxxx', // Seu Template ID
-  PUBLIC_KEY: 'xxxx_xxxx_xxxx'  // Sua Public Key
-};
-
-// ==========================================
 // 1. DEFINIÇÕES DE TIPOS & CONSTANTES
 // ==========================================
 
