@@ -19,7 +19,7 @@ const EMAILJS_CONFIG = {
 };
 
 // ==========================================
-// 1. DEFINIÇÕES DE TIPOS
+// 1. DEFINIÇÕES DE TIPOS & CONSTANTES
 // ==========================================
 
 export enum UserRole {
@@ -79,10 +79,6 @@ export interface AidRequest {
   adminApproved?: boolean;
 }
 
-// ==========================================
-// 2. CONSTANTES
-// ==========================================
-
 export const APP_NAME = "CITI Medicina Reprodutiva";
 export const PROGRAM_NAME = "Programa de Auxílios";
 
@@ -129,7 +125,7 @@ export const RULES = {
 };
 
 // ==========================================
-// 3. SUPABASE & API CLIENT
+// 2. SUPABASE & API CLIENT
 // ==========================================
 
 const env = (import.meta as any).env || {};
@@ -232,7 +228,7 @@ export const api = {
 
   async uploadFile(file: File): Promise<string> {
     if (!isSupabaseConnected || !supabase) {
-      console.warn("Supabase não conectado. Simulando upload local.");
+      //console.warn("Supabase não conectado. Simulando upload local.");
       return URL.createObjectURL(file);
     }
     const sanitizedName = file.name.replace(/[^a-zA-Z0-9.]/g, '_');
@@ -248,7 +244,7 @@ export const api = {
     
     // Ignora envio se as chaves não estiverem configuradas
     if (EMAILJS_CONFIG.SERVICE_ID === 'service_xxxx') {
-        console.warn('EmailJS não configurado. E-mail não enviado.');
+        // console.warn('EmailJS não configurado. E-mail não enviado.');
         return;
     }
 
@@ -270,7 +266,7 @@ export const api = {
 };
 
 // ==========================================
-// 4. COMPONENTS
+// 3. COMPONENTS
 // ==========================================
 
 // --- MAIN LAYOUT ---
@@ -879,7 +875,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users, onUpda
 };
 
 // ==========================================
-// 5. APLICAÇÃO PRINCIPAL
+// 4. APLICAÇÃO PRINCIPAL
 // ==========================================
 
 const App: React.FC = () => {

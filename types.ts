@@ -1,3 +1,4 @@
+
 export enum UserRole {
   EMPLOYEE = 'EMPLOYEE',
   ADMIN = 'ADMIN'
@@ -9,8 +10,8 @@ export interface User {
   email: string;
   role: UserRole;
   department?: string;
-  password?: string; // Optional because Google auth wouldn't have it, but custom auth will
-  resetRequested?: boolean; // Flag for password recovery flow
+  password?: string;
+  resetRequested?: boolean;
 }
 
 export enum Modality {
@@ -24,22 +25,31 @@ export enum RequestStatus {
   REJECTED = 'Recusado',
   PENDING_ACCOUNTABILITY = 'Aguardando Prestação de Contas',
   ACCOUNTABILITY_REVIEW = 'Análise de Contas',
+  WAITING_REIMBURSEMENT = 'Aguardando Reembolso',
   COMPLETED = 'Finalizado'
 }
 
 export interface AidRequest {
   id: string;
   employeeId: string;
-  employeeName: string; // System name
-  employeeInputName: string; // Manually input name
+  employeeName: string;
+  employeeInputName: string;
+  jobRole: string;
   eventName: string;
   eventLocation: string;
   eventDate: string;
-  eventParamsText?: string; // For URL or text description of params
+  registrationValue: string;
+  eventParamsText?: string;
   modality: Modality;
   status: RequestStatus;
   submissionDate: string;
+  
+  scientificApproved?: boolean;
+  adminApproved?: boolean;
+
   documents: SimpleFile[];
+  ethicsCommitteeProof?: SimpleFile; 
+
   accountabilityDocuments: SimpleFile[];
   rejectionReason?: string;
 }
@@ -48,4 +58,5 @@ export interface SimpleFile {
   name: string;
   size: string;
   date: string;
+  url?: string;
 }
