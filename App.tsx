@@ -1,881 +1,510 @@
+
 import React, { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
 import { 
-  LogOut, User as UserIcon, Database, HardDrive, Loader2, 
-  Lock, Mail, ArrowRight, UserPlus, HelpCircle, CheckCircle,
-  FileText, Upload, History, AlertCircle, Plus, ChevronRight, Download, Link as LinkIcon, Image as ImageIcon, Award, DollarSign, Trash2,
-  XCircle, Eye, AlertTriangle, MapPin, Info
+  LogOut, Database, HardDrive, Loader2, Lock, Mail, ShieldCheck, 
+  HelpCircle, CheckCircle, FileText, Upload, History, Info, 
+  DollarSign, Trash2, XCircle, Eye, ChevronRight, Download, Award 
 } from 'lucide-react';
+import emailjs from '@emailjs/browser';
+import { supabase, isSupabaseConnected } from './supabase';
 
 // ==========================================
-// 1. DEFINIÇÕES DE TIPOS (Inlined)
+// CONFIGURAÇÕES DO EMAILJS (PREENCHA AQUI)
+// ==========================================
+// Instruções:
+// 1. Crie conta em emailjs.com
+// 2. Crie um Email Service (ex: Gmail) e pegue o SERVICE_ID
+// 3. Crie um Email Template e pegue o TEMPLATE_ID
+// 4. Pegue sua Public Key em Account > API Keys
+const EMAILJS_CONFIG = {
+  SERVICE_ID: 'service_xxxx',   // Substitua pelo seu Service ID
+  TEMPLATE_ID: 'template_xxxx', // Substitua pelo seu Template ID
+  PUBLIC_KEY: 'xxxx_xxxx_xxxx'  // Substitua pela sua Public Key
+};
+
+// ==========================================
+// 1. TIPOS, ENUMS E REGRAS DE NEGÓCIO
 // ==========================================
 
-export enum UserRole {
-  EMPLOYEE = 'EMPLOYEE',
-  ADMIN = 'ADMIN'
-}
-
-export interface User {
-  id: string;
-  name: string;
-  email: string;
-  role: UserRole;
-  department?: string;
-  password?: string;
-  resetRequested?: boolean;
-}
-
-export enum Modality {
-  I = 'Modalidade I',
-  II = 'Modalidade II'
-}
-
+export enum UserRole { EMPLOYEE = 'EMPLOYEE', ADMIN = 'ADMIN' }
+export enum Modality { I = 'Modalidade I', II = 'Modalidade II' }
 export enum RequestStatus {
   PENDING_APPROVAL = 'Pendente Aprovação',
   APPROVED = 'Aprovado',
   REJECTED = 'Recusado',
   PENDING_ACCOUNTABILITY = 'Aguardando Prestação de Contas',
   ACCOUNTABILITY_REVIEW = 'Análise de Contas',
+  WAITING_REIMBURSEMENT = 'Aguardando Reembolso',
   COMPLETED = 'Finalizado'
 }
 
-export interface SimpleFile {
-  name: string;
-  size: string;
-  date: string;
-  url?: string; // Link real do Supabase Storage
-  data?: string; // Fallback para arquivos antigos (Base64)
+export interface User {
+  id: string; name: string; email: string; role: UserRole; 
+  password?: string;
 }
+
+export interface SimpleFile { name: string; size: string; url: string; }
 
 export interface AidRequest {
-  id: string;
-  employeeId: string;
-  employeeName: string;
-  employeeInputName: string;
-  eventName: string;
-  eventLocation: string;
-  eventDate: string;
-  eventParamsText?: string;
-  modality: Modality;
-  status: RequestStatus;
-  submissionDate: string;
-  documents: SimpleFile[];
+  id: string; employeeId: string; employeeInputName: string;
+  jobRole: string; eventName: string; eventDate: string; 
+  registrationValue: string; modality: Modality;
+  status: RequestStatus; submissionDate: string;
+  scientificApproved?: boolean; adminApproved?: boolean;
+  documents: SimpleFile[]; ethicsCommitteeProof?: SimpleFile;
   accountabilityDocuments: SimpleFile[];
-  rejectionReason?: string;
 }
 
-// ==========================================
-// 2. CONSTANTES (Inlined)
-// ==========================================
-
-export const APP_NAME = "CITI Medicina Reprodutiva";
-export const PROGRAM_NAME = "Programa de Auxílios";
-
-export const MOCK_USER: User = {
-  id: "emp-001",
-  name: "Dr. João Silva",
-  email: "joao.silva@citimedicina.com.br",
-  role: UserRole.EMPLOYEE,
-  department: "Embriologia"
-};
-
-export const INITIAL_REQUESTS: AidRequest[] = []; 
-
-export const RULES = {
-  MODALITY_I: {
-    title: "Modalidade I",
-    description: "Apresentação de trabalhos sem perspectiva de publicação em revistas científicas.",
-    requirements: [
-      "Apresentação como autor.",
-      "Apenas um beneficiário por trabalho.",
-      "Concedido uma única vez anualmente."
-    ],
-    deadline: "15 dias de antecedência do encerramento da submissão."
-  },
-  MODALITY_II: {
-    title: "Modalidade II",
-    description: "Apresentação de trabalhos com perspectiva de publicação em revistas científicas.",
-    requirements: [
-      "Apresentação como autor.",
-      "Novo pedido só após comprovação da publicação do anterior."
-    ],
-    deadline: "15 dias de antecedência."
-  },
-  ACCOUNTABILITY: {
-    deadline: "Máximo 30 dias após o evento.",
-    refundPeriod: "Até 60 dias após o evento.",
-    documents: [
-      "Certificado de participação",
-      "Certificado de apresentação",
-      "Foto no evento",
-      "Notas fiscais (Aéreo, Hotel, Alimentação)"
-    ]
-  }
-};
+const REIMBURSABLE_ITEMS = [
+  "Passagens aéreas/ônibus (com CPF do beneficiário)",
+  "Combustível (8Km/L) e Pedágios do percurso",
+  "Hospedagem (Hotel/AirBnB) - limite 3 dias antes/depois",
+  "Alimentação no período do evento (com CPF)",
+  "Inscrição do evento e cursos vinculados"
+];
 
 // ==========================================
-// 3. SUPABASE & API CLIENT (Inlined)
+// 2. SERVIÇOS DE API (BANCO DE DADOS E E-MAIL)
 // ==========================================
 
-// Supabase Setup
-const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL;
-const supabaseKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY;
-export const supabase = (supabaseUrl && supabaseKey) 
-  ? createClient(supabaseUrl, supabaseKey) 
-  : null;
-export const isSupabaseConnected = !!supabase;
-
-// API Service
-const LS_REQUESTS_KEY = 'citi_requests';
-const LS_USERS_KEY = 'citi_users';
-
-export const api = {
-  async getUsers(): Promise<User[]> {
-    if (isSupabaseConnected && supabase) {
-      const { data, error } = await supabase.from('users').select('content');
-      if (!error && data) {
-        return data.map((row: any) => row.content) as User[];
-      }
-    }
-    const saved = localStorage.getItem(LS_USERS_KEY);
-    return saved ? JSON.parse(saved) : [MOCK_USER];
-  },
-
-  async saveUser(user: User): Promise<void> {
-    if (isSupabaseConnected && supabase) {
-      const { error } = await supabase.from('users').upsert({ id: user.id, content: user });
-      if (error) console.error("Error saving user to DB:", error);
-    }
-    const current = await api.getUsers();
-    const exists = current.find(u => u.id === user.id);
-    let updated = current;
-    if (exists) {
-      updated = current.map(u => u.id === user.id ? user : u);
-    } else {
-      updated = [...current, user];
-    }
-    localStorage.setItem(LS_USERS_KEY, JSON.stringify(updated));
-  },
-
-  async updateUser(user: User): Promise<void> {
-    return api.saveUser(user);
-  },
-
+const api = {
+  // --- BUSCAR PEDIDOS ---
   async getRequests(): Promise<AidRequest[]> {
     if (isSupabaseConnected && supabase) {
-      const { data, error } = await supabase.from('requests').select('content');
-      if (!error && data) {
-        return data.map((row: any) => row.content) as AidRequest[];
-      }
+      const { data } = await supabase.from('requests').select('content');
+      return data ? data.map((r: any) => r.content) : [];
     }
-    const saved = localStorage.getItem(LS_REQUESTS_KEY);
-    return saved ? JSON.parse(saved) : INITIAL_REQUESTS;
+    const saved = localStorage.getItem('citi_reqs');
+    return saved ? JSON.parse(saved) : [];
   },
 
-  async saveRequest(req: AidRequest): Promise<void> {
-    if (isSupabaseConnected && supabase) {
-      const { error } = await supabase.from('requests').upsert({ id: req.id, content: req });
-      if (error) console.error("Error saving request to DB:", error);
-    }
+  // --- SALVAR PEDIDO ---
+  async saveRequest(req: AidRequest) {
+    if (isSupabaseConnected && supabase) await supabase.from('requests').upsert({ id: req.id, content: req });
     const current = await api.getRequests();
-    const exists = current.find(r => r.id === req.id);
-    let updated = current;
-    if (exists) {
-      updated = current.map(r => r.id === req.id ? req : r);
-    } else {
-      updated = [req, ...current];
-    }
-    localStorage.setItem(LS_REQUESTS_KEY, JSON.stringify(updated));
+    const updated = current.find(r => r.id === req.id) ? current.map(r => r.id === req.id ? req : r) : [req, ...current];
+    localStorage.setItem('citi_reqs', JSON.stringify(updated));
   },
 
-  async deleteRequest(id: string): Promise<void> {
-    // 1. Buscar a solicitação atual para identificar os arquivos ESPECÍFICOS desta solicitação
-    const currentRequests = await api.getRequests();
-    const reqToDelete = currentRequests.find(r => r.id === id);
-
-    if (reqToDelete && isSupabaseConnected && supabase) {
-      // 2. Coletar nomes dos arquivos (do Bucket 'documentos')
-      // Isso garante que apenas arquivos listados NESTA solicitação sejam apagados
-      const filesToDelete: string[] = [];
-      
-      const extractFileName = (url: string) => {
-        // Formato esperado: .../documentos/NOME_DO_ARQUIVO
-        const parts = url.split('/documentos/');
-        if (parts.length > 1) {
-          // Decodifica caso tenha espaços ou caracteres especiais na URL
-          return decodeURIComponent(parts[1]); 
-        }
-        return null;
-      };
-
-      // Verifica documentos iniciais da solicitação
-      if (reqToDelete.documents && Array.isArray(reqToDelete.documents)) {
-        reqToDelete.documents.forEach(doc => {
-          if (doc.url) {
-             const fileName = extractFileName(doc.url);
-             if (fileName) filesToDelete.push(fileName);
-          }
-        });
-      }
-      
-      // Verifica documentos de prestação de contas (mesmo se finalizado)
-      if (reqToDelete.accountabilityDocuments && Array.isArray(reqToDelete.accountabilityDocuments)) {
-        reqToDelete.accountabilityDocuments.forEach(doc => {
-          if (doc.url) {
-             const fileName = extractFileName(doc.url);
-             if (fileName) filesToDelete.push(fileName);
-          }
-        });
-      }
-
-      // 3. Deletar arquivos do Storage (se houver)
-      if (filesToDelete.length > 0) {
-        const { error } = await supabase.storage
-          .from('documentos')
-          .remove(filesToDelete);
-        
-        if (error) console.error("Erro ao limpar arquivos do storage:", error);
-      }
-      
-      // 4. Deletar registro do Banco de Dados
-      await supabase.from('requests').delete().eq('id', id);
-
-    } else if (isSupabaseConnected && supabase) {
-        // Fallback: se não achou em memória, tenta deletar do banco direto
-        await supabase.from('requests').delete().eq('id', id);
+  // --- BUSCAR USUÁRIOS ---
+  async getUsers(): Promise<User[]> {
+    if (isSupabaseConnected && supabase) {
+      const { data } = await supabase.from('users').select('content');
+      return data ? data.map((u: any) => u.content) : [];
     }
-
-    // 5. Atualizar estado local
-    const updated = currentRequests.filter(r => r.id !== id);
-    localStorage.setItem(LS_REQUESTS_KEY, JSON.stringify(updated));
+    const saved = localStorage.getItem('citi_users');
+    return saved ? JSON.parse(saved) : [];
   },
 
-  // --- FUNÇÃO DE UPLOAD ---
+  // --- SALVAR USUÁRIO ---
+  async saveUser(user: User) {
+    if (isSupabaseConnected && supabase) await supabase.from('users').upsert({ id: user.id, content: user });
+    const users = await api.getUsers();
+    localStorage.setItem('citi_users', JSON.stringify([...users.filter(u => u.id !== user.id), user]));
+  },
+
+  // --- UPLOAD DE ARQUIVOS ---
   async uploadFile(file: File): Promise<string> {
-    if (!isSupabaseConnected || !supabase) {
-      console.warn("Supabase não conectado. Simulando upload local.");
-      return URL.createObjectURL(file);
-    }
-
-    // Nome único para evitar sobrescrever e conflitos
-    const sanitizedName = file.name.replace(/[^a-zA-Z0-9.]/g, '_');
-    const fileName = `${Date.now()}_${sanitizedName}`;
-    
-    // Upload para o bucket 'documentos'
-    const { data, error } = await supabase.storage
-      .from('documentos')
-      .upload(fileName, file);
-
+    if (!isSupabaseConnected || !supabase) return URL.createObjectURL(file);
+    // Remove caracteres especiais do nome do arquivo
+    const cleanName = file.name.replace(/[^a-zA-Z0-9.]/g, '_');
+    const fileName = `${Date.now()}_${cleanName}`;
+    const { error } = await supabase.storage.from('documentos').upload(fileName, file);
     if (error) {
-      console.error("Erro no upload Supabase:", error);
-      throw new Error("Falha ao enviar arquivo. Verifique se o bucket 'documentos' existe e é público.");
+        console.error("Erro upload Supabase:", error);
+        alert("Erro ao fazer upload. Verifique sua conexão.");
+        return "";
     }
+    return supabase.storage.from('documentos').getPublicUrl(fileName).data.publicUrl;
+  },
 
-    // Pegar URL pública
-    const { data: urlData } = supabase.storage
-      .from('documentos')
-      .getPublicUrl(fileName);
-
-    return urlData.publicUrl;
+  // --- ENVIAR E-MAIL ---
+  async sendEmail(to: string, subject: string, body: string) {
+    // Lista de e-mails administrativos que recebem cópia de tudo
+    const admins = ["eirasmc@gmail.com", "edson.takitani@citimedicinareprodutiva.com.br"];
+    
+    const send = async (email: string) => {
+      try {
+        if(EMAILJS_CONFIG.SERVICE_ID === 'service_xxxx') {
+            console.warn("EmailJS não configurado no código.");
+            return;
+        }
+        await emailjs.send(EMAILJS_CONFIG.SERVICE_ID, EMAILJS_CONFIG.TEMPLATE_ID, 
+          { to_email: email, subject, message: body }, EMAILJS_CONFIG.PUBLIC_KEY);
+      } catch (e) { console.error("Erro EmailJS:", e); }
+    };
+    // Envia para o interessado e para os gestores
+    await Promise.all([to, ...admins].map(email => send(email)));
   }
 };
 
 // ==========================================
-// 4. COMPONENTS (Inlined)
+// 3. COMPONENTES VISUAIS
 // ==========================================
 
-// --- MAIN LAYOUT ---
-interface LayoutProps {
-  children: React.ReactNode;
-  user: User | null;
-  onLogout: () => void;
-}
-
-const MainLayout: React.FC<LayoutProps> = ({ children, user, onLogout }) => {
-  return (
-    <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
-      <header className="bg-white text-citi-900 shadow-sm border-b border-gray-200 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <img 
-              src="/citi-logo.png" 
-              alt="CITI Medicina Reprodutiva" 
-              className="h-12 w-auto object-contain"
-              onError={(e) => {
-                e.currentTarget.style.display = 'none';
-                e.currentTarget.nextElementSibling?.classList.remove('hidden');
-              }}
-            />
-            <div className="hidden flex items-center gap-4">
-               <div className="h-10 w-10 bg-citi-900 rounded-full flex items-center justify-center text-white font-bold text-xl">C</div>
-              <div className="flex flex-col">
-                <span className="font-bold text-lg tracking-wide text-citi-900">{APP_NAME}</span>
-                <span className="text-xs text-citi-600 uppercase tracking-wider">{PROGRAM_NAME}</span>
-              </div>
-            </div>
-            <div className="hidden md:block h-8 w-px bg-gray-200"></div>
-            <div className="hidden md:flex flex-col justify-center h-full">
-               <span className="text-xs font-semibold text-citi-600 uppercase tracking-widest">{PROGRAM_NAME}</span>
-            </div>
-          </div>
-          {user && (
-            <div className="flex items-center gap-4">
-              <div className="hidden md:flex flex-col items-end mr-2">
-                <span className="text-sm font-bold text-citi-900">{user.name}</span>
-                <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
-                  {user.role === UserRole.ADMIN ? 'Administrador' : 'Colaborador'}
-                </span>
-              </div>
-              <button onClick={onLogout} className="p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-500 hover:text-citi-600" title="Sair">
-                <LogOut size={20} />
-              </button>
-            </div>
-          )}
+const Layout: React.FC<{ children: React.ReactNode, user: User | null, onLogout: () => void }> = ({ children, user, onLogout }) => (
+  <div className="min-h-screen flex flex-col bg-slate-50 font-sans">
+    <header className="bg-white border-b px-6 h-20 flex items-center justify-between sticky top-0 z-50 shadow-sm">
+      <div className="flex items-center gap-3">
+        <div className="h-10 w-10 bg-citi-600 rounded-xl flex items-center justify-center text-white font-bold shadow-lg">C</div>
+        <div>
+          <h1 className="font-bold text-slate-900 leading-tight">CITI Medicina</h1>
+          <p className="text-[10px] text-citi-600 font-bold uppercase tracking-wider">Programa de Auxílios</p>
         </div>
-      </header>
-      <main className="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {children}
-      </main>
-      <footer className="bg-white border-t border-gray-200 py-6 mt-auto">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row justify-between items-center text-sm text-gray-400 gap-4">
-          <div>&copy; {new Date().getFullYear()} {APP_NAME}. Todos os direitos reservados.</div>
-          <div className="flex items-center gap-2 text-xs bg-gray-50 px-3 py-1 rounded-full border border-gray-100">
-             {isSupabaseConnected ? (
-               <>
-                <Database size={12} className="text-green-500" />
-                <span className="text-green-700 font-medium">Banco Conectado (Nuvem)</span>
-               </>
-             ) : (
-               <>
-                <HardDrive size={12} className="text-orange-500" />
-                <span className="text-orange-600 font-medium">Modo Demonstração (Local)</span>
-               </>
-             )}
+      </div>
+      {user && (
+        <div className="flex items-center gap-4">
+          <div className="text-right hidden sm:block">
+            <p className="text-sm font-bold text-slate-800">{user.name}</p>
+            <p className="text-[10px] text-slate-500 uppercase font-medium bg-slate-100 px-2 py-0.5 rounded-full inline-block mt-0.5">{user.role === UserRole.ADMIN ? 'Gestor' : 'Colaborador'}</p>
           </div>
+          <button onClick={onLogout} className="p-2 hover:bg-slate-100 rounded-full text-slate-400 transition-colors"><LogOut size={20}/></button>
         </div>
-      </footer>
-    </div>
-  );
-};
+      )}
+    </header>
+    <main className="flex-grow p-4 sm:p-8 max-w-6xl w-full mx-auto animate-fade-in">{children}</main>
+    <footer className="p-8 border-t bg-white flex flex-col sm:flex-row justify-between items-center text-[10px] text-slate-400 gap-4">
+      <span>© {new Date().getFullYear()} CITI Medicina Reprodutiva. Sistema Interno.</span>
+      <div className="flex items-center gap-2">
+        {isSupabaseConnected ? <><Database size={12} className="text-green-500"/> Banco de Dados Conectado</> : <><HardDrive size={12} className="text-amber-500"/> Modo Local (Demonstração)</>}
+      </div>
+    </footer>
+  </div>
+);
 
-// --- LOGIN COMPONENT ---
-interface LoginProps {
-  onLogin: (user: User) => void;
-  onRegister: (name: string, email: string, pass: string) => { success: boolean, message: string };
-  onVerify: (email: string, pass: string) => { success: boolean, user?: User, message: string };
-  onRequestReset: (email: string) => boolean;
-}
-
-const Login: React.FC<LoginProps> = ({ onLogin, onRegister, onVerify, onRequestReset }) => {
-  const [activeTab, setActiveTab] = useState<'LOGIN' | 'REGISTER' | 'ADMIN' | 'RESET'>('LOGIN');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
-  const [adminPassword, setAdminPassword] = useState('');
-  const [error, setError] = useState('');
-  const [successMsg, setSuccessMsg] = useState('');
-
-  const clearForm = () => { setEmail(''); setPassword(''); setName(''); setAdminPassword(''); setError(''); setSuccessMsg(''); };
-  const switchTab = (tab: any) => { setActiveTab(tab); clearForm(); };
+const EmployeeView: React.FC<{ user: User, requests: AidRequest[], onRefresh: () => void }> = ({ user, requests, onRefresh }) => {
+  const [tab, setTab] = useState<'HOME'|'NEW'|'HIST'|'ACC'>('HOME');
+  const [form, setForm] = useState({ 
+    name: user.name, role: '', event: '', date: '', val: '', mod: Modality.I, 
+    sumFile: null as File | null, ethicsFile: null as File | null 
+  });
+  const [loading, setLoading] = useState(false);
   
-  const handleEmailLogin = (e: React.FormEvent) => {
+  // Estado para prestação de contas
+  const [accRequest, setAccRequest] = useState('');
+  const [accFiles, setAccFiles] = useState<File[]>([]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const result = onVerify(email, password);
-    if (result.success && result.user) onLogin(result.user);
-    else setError(result.message);
-  };
-
-  const handleRegister = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (password.length < 6) { setError('A senha deve ter no mínimo 6 caracteres.'); return; }
-    const result = onRegister(name, email, password);
-    if (!result.success) setError(result.message);
-  };
-
-  const handleResetRequest = (e: React.FormEvent) => {
-    e.preventDefault();
-    const sent = onRequestReset(email);
-    if (sent) { setSuccessMsg('Solicitação enviada! O administrador foi notificado.'); setError(''); }
-    else setError('E-mail não encontrado na base de dados.');
-  };
-
-  const handleAdminLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (adminPassword === 'citiadminciti') {
-      onLogin({ id: 'admin-01', name: 'Gestão CITI', email: 'admin@citi.com', role: UserRole.ADMIN });
-    } else setError('Senha de administrador incorreta.');
-  };
-
-  return (
-    <div className="flex flex-col items-center justify-center py-12 px-4 sm:px-6 lg:px-8 animate-fade-in min-h-[80vh]">
-      <div className="mb-8">
-        <img src="/citi-logo.png" alt="CITI" className="h-24 w-auto object-contain mx-auto" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
-      </div>
-      <div className="max-w-md w-full space-y-8 bg-white p-8 rounded-xl shadow-xl border border-gray-100 relative overflow-hidden">
-        <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-citi-900 via-citi-600 to-citi-accent"></div>
-        <div className="text-center pt-2">
-          <h2 className="text-3xl font-bold text-citi-900">{activeTab === 'REGISTER' ? 'Criar Conta' : activeTab === 'RESET' ? 'Recuperar Senha' : 'Bem-vindo'}</h2>
-          <p className="mt-2 text-sm text-gray-600">{activeTab === 'RESET' ? 'Informe seu e-mail.' : <span>Acesse o portal do <span className="font-semibold text-citi-600">Programa de Auxílios</span>.</span>}</p>
-        </div>
-        <div className="flex bg-gray-100 p-1 rounded-lg">
-          {['LOGIN', 'REGISTER', 'ADMIN'].map((tab) => (
-            <button key={tab} onClick={() => switchTab(tab)} className={`flex-1 py-2 text-xs sm:text-sm font-medium rounded-md transition-all ${activeTab === tab ? 'bg-white shadow text-citi-900' : 'text-gray-500 hover:text-gray-700'}`}>
-              {tab === 'LOGIN' ? 'Login' : tab === 'REGISTER' ? 'Cadastro' : 'Admin'}
-            </button>
-          ))}
-        </div>
-        {activeTab === 'LOGIN' && (
-          <div className="space-y-4 pt-4">
-            <form onSubmit={handleEmailLogin} className="space-y-4">
-              <div><label className="block text-sm font-medium text-gray-700">Email</label><div className="mt-1 relative rounded-md shadow-sm"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Mail className="h-5 w-5 text-gray-400" /></div><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900" /></div></div>
-              <div><label className="block text-sm font-medium text-gray-700">Senha</label><div className="mt-1 relative rounded-md shadow-sm"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Lock className="h-5 w-5 text-gray-400" /></div><input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900" /></div></div>
-              {error && <div className="text-red-500 text-sm text-center font-medium bg-red-50 p-2 rounded">{error}</div>}
-              <button type="submit" className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-citi-600 hover:bg-citi-700 transition-colors">Entrar</button>
-            </form>
-            <div className="text-center mt-2"><button onClick={() => switchTab('RESET')} className="text-sm text-citi-600 hover:underline flex items-center justify-center mx-auto"><HelpCircle size={14} className="mr-1" /> Esqueceu a senha?</button></div>
-          </div>
-        )}
-        {activeTab === 'REGISTER' && (
-          <form onSubmit={handleRegister} className="space-y-4 pt-4">
-             <div><label className="block text-sm font-medium text-gray-700">Nome Completo</label><div className="mt-1 relative rounded-md shadow-sm"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><UserIcon className="h-5 w-5 text-gray-400" /></div><input type="text" required value={name} onChange={(e) => setName(e.target.value)} className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900" placeholder="Dr. Nome" /></div></div>
-             <div><label className="block text-sm font-medium text-gray-700">Email</label><div className="mt-1 relative rounded-md shadow-sm"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Mail className="h-5 w-5 text-gray-400" /></div><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900" /></div></div>
-             <div><label className="block text-sm font-medium text-gray-700">Senha</label><div className="mt-1 relative rounded-md shadow-sm"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Lock className="h-5 w-5 text-gray-400" /></div><input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900" /></div></div>
-             {error && <div className="text-red-500 text-sm text-center font-medium bg-red-50 p-2 rounded">{error}</div>}
-             <button type="submit" className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 transition-colors">Cadastrar</button>
-          </form>
-        )}
-        {activeTab === 'RESET' && (
-          <form onSubmit={handleResetRequest} className="space-y-6 pt-4">
-             {!successMsg ? (
-               <>
-                <div className="bg-blue-50 p-4 rounded-lg text-sm text-blue-800 border border-blue-200">Caso tenha perdido o acesso, o administrador precisará autorizar a criação de uma nova senha.</div>
-                <div><label className="block text-sm font-medium text-gray-700">Email</label><div className="mt-1 relative rounded-md shadow-sm"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Mail className="h-5 w-5 text-gray-400" /></div><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900" /></div></div>
-                {error && <div className="text-red-500 text-sm text-center font-medium">{error}</div>}
-                <button type="submit" className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-citi-600 hover:bg-citi-700 transition-colors">Solicitar Redefinição</button>
-               </>
-             ) : (
-               <div className="text-center py-6"><CheckCircle className="mx-auto h-12 w-12 text-green-500 mb-4" /><h3 className="text-lg font-bold text-gray-900">Solicitação Enviada</h3><button type="button" onClick={() => switchTab('LOGIN')} className="mt-6 text-citi-600 hover:underline font-medium">Voltar para Login</button></div>
-             )}
-          </form>
-        )}
-        {activeTab === 'ADMIN' && (
-          <form onSubmit={handleAdminLogin} className="space-y-6 pt-4">
-            <div><label className="block text-sm font-medium text-gray-700">Senha Admin</label><div className="mt-1 relative rounded-md shadow-sm"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Lock className="h-5 w-5 text-gray-400" /></div><input type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900" /></div></div>
-            {error && <div className="text-red-500 text-sm text-center font-medium">{error}</div>}
-            <button type="submit" className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-citi-900 hover:bg-citi-800 transition-colors">Acessar Painel</button>
-          </form>
-        )}
-      </div>
-    </div>
-  );
-};
-
-// --- EMPLOYEE DASHBOARD COMPONENT ---
-interface EmployeeDashboardProps {
-  requests: AidRequest[];
-  employeeId: string;
-  onRequestSubmit: (req: Omit<AidRequest, 'id' | 'status' | 'submissionDate' | 'accountabilityDocuments' | 'employeeName'>) => void;
-  onAccountabilitySubmit: (reqId: string, docs: SimpleFile[]) => void;
-}
-
-const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employeeId, onRequestSubmit, onAccountabilitySubmit }) => {
-  const [view, setView] = useState<'HOME' | 'REQUEST' | 'ACCOUNTABILITY' | 'HISTORY'>('HOME');
-  const myRequests = requests.filter(r => r.employeeId === employeeId);
-  const currentYear = new Date().getFullYear();
-  const hasApprovedModalityI = myRequests.some(r => r.modality === Modality.I && new Date(r.submissionDate).getFullYear() === currentYear && (r.status === RequestStatus.APPROVED || r.status === RequestStatus.COMPLETED || r.status === RequestStatus.ACCOUNTABILITY_REVIEW || r.status === RequestStatus.PENDING_ACCOUNTABILITY));
-  const hasApprovedModalityII = myRequests.some(r => r.modality === Modality.II && new Date(r.submissionDate).getFullYear() === currentYear && (r.status === RequestStatus.APPROVED || r.status === RequestStatus.COMPLETED || r.status === RequestStatus.ACCOUNTABILITY_REVIEW || r.status === RequestStatus.PENDING_ACCOUNTABILITY));
-
-  // Função nova de Upload (usando API)
-  const handleFileUpload = async (file: File): Promise<SimpleFile> => {
+    if (!form.sumFile) return alert("Erro: É obrigatório anexar o resumo do trabalho.");
+    setLoading(true);
     try {
-      const url = await api.uploadFile(file);
-      return {
-        name: file.name,
-        size: (file.size / 1024 / 1024).toFixed(2) + 'MB',
-        date: new Date().toISOString(),
-        url: url
+      const sumUrl = await api.uploadFile(form.sumFile);
+      let ethicsUrl = "";
+      if (form.ethicsFile) ethicsUrl = await api.uploadFile(form.ethicsFile);
+
+      const req: AidRequest = {
+        id: Date.now().toString(), employeeId: user.id, employeeInputName: form.name,
+        jobRole: form.role, eventName: form.event, eventDate: form.date,
+        registrationValue: form.val, modality: form.mod, status: RequestStatus.PENDING_APPROVAL,
+        submissionDate: new Date().toISOString(), documents: [{ name: form.sumFile.name, size: 'PDF', url: sumUrl }],
+        ethicsCommitteeProof: form.ethicsFile ? { name: form.ethicsFile.name, size: 'PDF', url: ethicsUrl } : undefined,
+        accountabilityDocuments: []
       };
-    } catch (e: any) {
-      alert("Erro no upload: " + e.message);
-      throw e;
-    }
+
+      await api.saveRequest(req);
+      await api.sendEmail(user.email, "Solicitação Recebida - CITI", `Olá ${form.name},\n\nRecebemos sua solicitação para o evento "${form.event}".\nEla será analisada pelos comitês.\n\nAtenciosamente,\nEquipe CITI`);
+      
+      alert("Solicitação enviada com sucesso!");
+      onRefresh(); setTab('HIST');
+      // Reset form
+      setForm({ name: user.name, role: '', event: '', date: '', val: '', mod: Modality.I, sumFile: null, ethicsFile: null });
+    } catch (err) {
+        alert("Ocorreu um erro ao enviar. Tente novamente.");
+    } finally { setLoading(false); }
   };
 
-  const Home = () => (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-fade-in">
-      {[
-        { id: 'REQUEST', icon: FileText, title: 'Solicitar Auxílio', desc: 'Inicie um novo processo.', color: 'text-citi-600', bg: 'bg-blue-50', hover: 'hover:border-citi-600' },
-        { id: 'ACCOUNTABILITY', icon: Upload, title: 'Prestação de Contas', desc: 'Envie comprovantes.', color: 'text-emerald-600', bg: 'bg-emerald-50', hover: 'hover:border-emerald-500' },
-        { id: 'HISTORY', icon: History, title: 'Histórico', desc: 'Acompanhe solicitações.', color: 'text-purple-600', bg: 'bg-purple-50', hover: 'hover:border-purple-500' }
-      ].map((item: any) => (
-        <button key={item.id} onClick={() => setView(item.id)} className={`group bg-white p-8 rounded-xl shadow-sm border border-gray-200 ${item.hover} hover:shadow-lg transition-all duration-300 text-left flex flex-col justify-between h-64`}>
-          <div className={`p-4 ${item.bg} rounded-full w-fit transition-colors`}><item.icon className={`w-8 h-8 ${item.color}`} /></div>
-          <div><h3 className="text-xl font-bold text-gray-900 mb-2">{item.title}</h3><p className="text-gray-500 text-sm">{item.desc}</p></div>
-        </button>
-      ))}
-    </div>
-  );
+  const handleAccountabilitySubmit = async () => {
+     if(!accRequest || accFiles.length === 0) return alert("Selecione o evento e anexe os arquivos.");
+     setLoading(true);
+     try {
+         const request = requests.find(r => r.id === accRequest);
+         if(!request) return;
 
-  const RequestForm = () => {
-    const [formData, setFormData] = useState({ employeeInputName: '', eventName: '', eventLocation: '', eventDate: '', modality: Modality.I, eventParamsType: 'TEXT' as 'TEXT' | 'FILE', eventParamsText: '', summaryFile: null as SimpleFile | null, paramsFile: null as SimpleFile | null });
-    const [dateError, setDateError] = useState<string | null>(null);
-    const [uploading, setUploading] = useState(false);
+         const uploadedDocs = await Promise.all(accFiles.map(async (f) => ({
+             name: f.name,
+             size: 'FILE',
+             url: await api.uploadFile(f)
+         })));
 
-    useEffect(() => {
-      if (formData.eventDate) {
-        const diffDays = Math.ceil((new Date(formData.eventDate).getTime() - new Date().setHours(0,0,0,0)) / (1000 * 60 * 60 * 24));
-        setDateError(diffDays < 15 ? "Mínimo 15 dias de antecedência." : null);
-      }
-    }, [formData.eventDate]);
+         const updatedReq: AidRequest = {
+             ...request,
+             status: RequestStatus.ACCOUNTABILITY_REVIEW,
+             accountabilityDocuments: [...(request.accountabilityDocuments || []), ...uploadedDocs]
+         };
 
-    const isBlocked = (formData.modality === Modality.I && hasApprovedModalityI) || (formData.modality === Modality.II && hasApprovedModalityII);
-    
-    const handleSubmit = (e: React.FormEvent) => {
-      e.preventDefault();
-      if (dateError) return alert("Prazo inválido.");
-      const docs: SimpleFile[] = [];
-      if (formData.summaryFile) docs.push(formData.summaryFile);
-      if (formData.paramsFile) docs.push(formData.paramsFile);
-      onRequestSubmit({ employeeId, employeeInputName: formData.employeeInputName, eventName: formData.eventName, eventLocation: formData.eventLocation, eventDate: formData.eventDate, modality: formData.modality, eventParamsText: formData.eventParamsType === 'TEXT' ? formData.eventParamsText : undefined, documents: docs });
-      setView('HISTORY');
-    };
-
-    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, type: 'summary' | 'params') => {
-      if (e.target.files?.[0]) {
-        setUploading(true);
-        try {
-          const file = e.target.files[0];
-          const uploaded = await handleFileUpload(file);
-          // Adiciona prefixo no nome
-          uploaded.name = (type === 'summary' ? "Resumo: " : "Params: ") + file.name;
-          setFormData({ ...formData, [type === 'summary' ? 'summaryFile' : 'paramsFile']: uploaded });
-        } finally {
-          setUploading(false);
-        }
-      }
-    };
-
-    return (
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
-        <div className="flex justify-between items-center mb-6 border-b pb-4"><h2 className="text-2xl font-bold text-citi-900">Nova Solicitação</h2><button onClick={() => setView('HOME')} className="text-gray-500 hover:text-citi-600">Voltar</button></div>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2">
-            <form onSubmit={handleSubmit} className="space-y-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Modalidade</label>
-                <div className="grid grid-cols-2 gap-4">
-                  {[Modality.I, Modality.II].map(m => (
-                    <button key={m} type="button" onClick={() => setFormData({...formData, modality: m})} className={`p-4 border rounded-lg text-left transition-all ${formData.modality === m ? 'border-citi-600 bg-blue-50 ring-1 ring-citi-600' : 'border-gray-200'}`}>
-                      <div className="font-bold text-citi-900">{m}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {isBlocked && <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded text-red-700 text-sm">Limite anual atingido para esta modalidade.</div>}
-              <input required disabled={isBlocked} type="text" className="w-full px-3 py-2 border rounded-lg" placeholder="Nome Completo" value={formData.employeeInputName} onChange={e => setFormData({...formData, employeeInputName: e.target.value})} />
-              <div className="grid grid-cols-2 gap-4">
-                 <input required disabled={isBlocked} type="text" className="w-full px-3 py-2 border rounded-lg" placeholder="Nome do Evento" value={formData.eventName} onChange={e => setFormData({...formData, eventName: e.target.value})} />
-                 <input required disabled={isBlocked} type="text" className="w-full px-3 py-2 border rounded-lg" placeholder="Local" value={formData.eventLocation} onChange={e => setFormData({...formData, eventLocation: e.target.value})} />
-              </div>
-              <div>
-                <input required disabled={isBlocked} type="date" className={`w-full px-3 py-2 border rounded-lg ${dateError ? 'border-red-500' : ''}`} value={formData.eventDate} onChange={e => setFormData({...formData, eventDate: e.target.value})} />
-                {dateError && <p className="text-red-600 text-xs mt-1">{dateError}</p>}
-              </div>
-              <div className="border-2 border-dashed rounded-lg p-4 text-center">
-                 <input required={!formData.summaryFile} type="file" className="hidden" id="sum-file" onChange={e => handleFileChange(e, 'summary')} disabled={isBlocked || uploading} />
-                 <label htmlFor="sum-file" className="cursor-pointer text-sm text-citi-600">
-                    {uploading ? "Enviando..." : formData.summaryFile ? formData.summaryFile.name : "Upload Resumo (PDF)"}
-                 </label>
-              </div>
-              <div className="bg-gray-50 p-4 rounded-lg">
-                 <div className="flex gap-2 mb-2"><button type="button" onClick={() => setFormData({...formData, eventParamsType: 'TEXT'})} className="text-xs border px-2 py-1 rounded">Link/Texto</button><button type="button" onClick={() => setFormData({...formData, eventParamsType: 'FILE'})} className="text-xs border px-2 py-1 rounded">Arquivo</button></div>
-                 {formData.eventParamsType === 'TEXT' ? 
-                   <input type="text" className="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Regras do evento..." value={formData.eventParamsText} onChange={e => setFormData({...formData, eventParamsText: e.target.value})} /> 
-                   : <input type="file" onChange={e => handleFileChange(e, 'params')} disabled={uploading} className="text-sm" />
-                 }
-                 {uploading && formData.eventParamsType === 'FILE' && <span className="text-xs text-blue-600">Enviando...</span>}
-              </div>
-              <button type="submit" disabled={isBlocked || !!dateError || !formData.employeeInputName || !formData.summaryFile || uploading} className="w-full bg-citi-600 text-white py-3 rounded-lg font-bold hover:bg-citi-700 disabled:bg-gray-300">
-                 {uploading ? "Aguarde o envio..." : "Enviar"}
-              </button>
-            </form>
-          </div>
-          <div className="bg-blue-50 p-6 rounded-xl h-fit text-sm text-gray-700 space-y-4">
-             <h3 className="font-bold text-citi-900">Regras</h3>
-             <p>{formData.modality === Modality.I ? RULES.MODALITY_I.description : RULES.MODALITY_II.description}</p>
-             <p>Prazo: {formData.modality === Modality.I ? RULES.MODALITY_I.deadline : RULES.MODALITY_II.deadline}</p>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const AccountabilityView = () => {
-    const pending = myRequests.filter(r => r.status === RequestStatus.APPROVED || r.status === RequestStatus.PENDING_ACCOUNTABILITY);
-    const [selectedId, setSelectedId] = useState("");
-    const [files, setFiles] = useState<{part: SimpleFile|null, pres: SimpleFile|null, photo: SimpleFile|null, receipts: SimpleFile[]}>({part: null, pres: null, photo: null, receipts: []});
-    const [uploading, setUploading] = useState(false);
-
-    const handleSubmit = (e: React.FormEvent) => {
-      e.preventDefault();
-      if(selectedId && files.part && files.pres && files.photo) {
-        onAccountabilitySubmit(selectedId, [files.part, files.pres, files.photo, ...files.receipts]);
-        setView('HISTORY');
-      }
-    };
-
-    const handleSingle = async (field: 'part'|'pres'|'photo', e: any, prefix: string) => {
-       if (e.target.files?.[0]) {
-         setUploading(true);
-         try {
-           const uploaded = await handleFileUpload(e.target.files[0]);
-           uploaded.name = prefix + ": " + e.target.files[0].name;
-           setFiles(p => ({...p, [field]: uploaded}));
-         } finally {
-            setUploading(false);
-         }
-       }
-    };
-
-    const handleReceipts = async (e: any) => {
-       if (e.target.files) {
-         setUploading(true);
-         try {
-           const newFiles = await Promise.all(Array.from(e.target.files).map(async (f: any) => {
-             const up = await handleFileUpload(f);
-             up.name = "Recibo: " + f.name;
-             return up;
-           }));
-           setFiles(p => ({...p, receipts: [...p.receipts, ...newFiles]}));
-         } finally {
-           setUploading(false);
-         }
-       }
-    };
-
-    if (pending.length === 0) return <div className="text-center py-20 bg-white rounded-xl shadow-sm"><CheckCircle className="mx-auto h-16 w-16 text-gray-300 mb-4" /><p>Nenhuma pendência.</p><button onClick={() => setView('HOME')} className="mt-4 text-citi-600">Voltar</button></div>;
-
-    return (
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 max-w-4xl mx-auto">
-        <h2 className="text-2xl font-bold mb-6">Prestação de Contas</h2>
-        <form onSubmit={handleSubmit} className="space-y-6">
-           <select className="w-full px-3 py-3 border rounded-lg" value={selectedId} onChange={e => setSelectedId(e.target.value)} required>
-             <option value="">Selecione o Auxílio...</option>
-             {pending.map(r => <option key={r.id} value={r.id}>{r.eventName}</option>)}
-           </select>
-           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {[{id:'part', lbl:'Cert. Participação'}, {id:'pres', lbl:'Cert. Apresentação'}, {id:'photo', lbl:'Foto Evento'}].map((f: any) => (
-                <div key={f.id} className="border p-4 rounded-lg text-center">
-                  <label className="block text-sm font-bold mb-2">{f.lbl}</label>
-                  <input type="file" onChange={e => handleSingle(f.id, e, f.lbl)} disabled={uploading} className="text-xs" />
-                  {uploading && <div className="text-xs text-citi-600 mt-1">Carregando...</div>}
-                </div>
-              ))}
-              <div className="border p-4 rounded-lg text-center">
-                <label className="block text-sm font-bold mb-2">Recibos/Notas</label>
-                <input type="file" multiple onChange={handleReceipts} disabled={uploading} className="text-xs" />
-                <div className="text-xs mt-1 text-gray-500">{files.receipts.length} arquivos</div>
-                {uploading && <div className="text-xs text-citi-600 mt-1">Carregando...</div>}
-              </div>
-           </div>
-           <button type="submit" disabled={!selectedId || !files.part || !files.pres || !files.photo || uploading} className="w-full bg-emerald-600 text-white py-3 rounded-lg font-bold hover:bg-emerald-700 disabled:bg-gray-300">
-             {uploading ? "Aguarde envio..." : "Enviar"}
-           </button>
-        </form>
-      </div>
-    );
-  };
-
-  const HistoryView = () => (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center"><h2 className="text-2xl font-bold">Histórico</h2><button onClick={() => setView('HOME')} className="text-sm text-citi-600">Voltar</button></div>
-      <div className="grid gap-4">
-         {myRequests.map(req => (
-           <div key={req.id} className="bg-white p-6 rounded-xl shadow-sm border flex justify-between items-center">
-             <div>
-               <span className={`px-2 py-1 rounded text-xs font-bold ${req.status === RequestStatus.APPROVED ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>{req.status}</span>
-               <h3 className="font-bold text-lg mt-1">{req.eventName}</h3>
-               <p className="text-sm text-gray-600">{req.modality} - {new Date(req.eventDate).toLocaleDateString()}</p>
-             </div>
-           </div>
-         ))}
-      </div>
-    </div>
-  );
-
-  return <div>{view === 'HOME' && <Home />}{view === 'REQUEST' && <RequestForm />}{view === 'ACCOUNTABILITY' && <AccountabilityView />}{view === 'HISTORY' && <HistoryView />}</div>;
-};
-
-// --- ADMIN DASHBOARD COMPONENT ---
-interface AdminDashboardProps {
-  requests: AidRequest[];
-  users: User[];
-  onUpdateStatus: (id: string, status: RequestStatus, reason?: string) => void;
-  onDelete: (id: string) => void;
-  onApproveReset: (userId: string) => void;
-}
-
-const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users, onUpdateStatus, onDelete, onApproveReset }) => {
-  const [selectedRequest, setSelectedRequest] = useState<AidRequest | null>(null);
-  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
-
-  // Stats
-  const pendingCount = requests.filter(r => r.status === RequestStatus.PENDING_APPROVAL).length;
-  const accReviewCount = requests.filter(r => r.status === RequestStatus.ACCOUNTABILITY_REVIEW).length;
-  const resetRequests = users.filter(u => u.resetRequested && u.role === UserRole.EMPLOYEE);
-
-  // Helper to check for Modality II History
-  const checkForModalityIIWarning = (req: AidRequest) => {
-    if (req.modality !== Modality.II) return false;
-    
-    // Check if this user has ANY previous Modality II request that is COMPLETED, APPROVED or in ACCOUNTABILITY
-    // This implies they have used the benefit before and now must prove publication
-    const previous = requests.find(r => 
-      r.employeeId === req.employeeId && 
-      r.modality === Modality.II && 
-      r.id !== req.id &&
-      (r.status === RequestStatus.APPROVED || r.status === RequestStatus.COMPLETED || r.status === RequestStatus.ACCOUNTABILITY_REVIEW || r.status === RequestStatus.PENDING_ACCOUNTABILITY)
-    );
-    
-    return !!previous;
-  };
-
-  const handleDownload = (file: SimpleFile) => {
-    if (file.url) {
-       window.open(file.url, '_blank');
-    } else if (file.data) {
-       const link = document.createElement('a');
-       link.href = file.data;
-       link.download = file.name;
-       document.body.appendChild(link);
-       link.click();
-       document.body.removeChild(link);
-    } else {
-       alert("Arquivo indisponível.");
-    }
-  };
-
-  const StatusBadge = ({ status }: { status: RequestStatus }) => {
-    let color = 'bg-gray-100 text-gray-800';
-    if (status === RequestStatus.APPROVED) color = 'bg-green-100 text-green-800';
-    if (status === RequestStatus.REJECTED) color = 'bg-red-100 text-red-800';
-    if (status === RequestStatus.PENDING_APPROVAL) color = 'bg-yellow-100 text-yellow-800';
-    if (status === RequestStatus.COMPLETED) color = 'bg-blue-100 text-blue-800';
-    return <span className={`px-2 py-1 rounded-full text-xs font-bold uppercase ${color}`}>{status}</span>;
+         await api.saveRequest(updatedReq);
+         await api.sendEmail(user.email, "Prestação de Contas Enviada", `Recebemos os documentos de prestação de contas para o evento ${request.eventName}.`);
+         alert("Prestação de contas enviada!");
+         onRefresh();
+         setTab('HIST');
+         setAccRequest('');
+         setAccFiles([]);
+     } finally { setLoading(false); }
   };
 
   return (
-    <div className="space-y-8 animate-fade-in relative">
-      <div className="grid grid-cols-3 gap-6">
-        {[{l: 'Pendentes', v: pendingCount, c: 'border-l-yellow-400'}, {l: 'Em Análise', v: accReviewCount, c: 'border-l-blue-400'}, {l: 'Total', v: requests.length, c: 'border-l-green-400'}].map((s:any, i) => (
-          <div key={i} className={`bg-white p-6 rounded-xl shadow-sm border ${s.c}`}><div className="text-gray-500 text-sm">{s.l}</div><div className="text-3xl font-bold">{s.v}</div></div>
+    <div className="space-y-8">
+      <div className="flex justify-center gap-2 flex-wrap">
+        {[
+            {id: 'HOME', label: 'Início'}, 
+            {id: 'NEW', label: 'Nova Solicitação'}, 
+            {id: 'ACC', label: 'Prestação de Contas'},
+            {id: 'HIST', label: 'Meu Histórico'}
+        ].map(t => (
+          <button key={t.id} onClick={() => setTab(t.id as any)} className={`px-6 py-2.5 rounded-full text-xs font-bold transition-all ${tab===t.id?'bg-citi-600 text-white shadow-lg shadow-citi-500/30 transform scale-105':'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}>
+            {t.label}
+          </button>
         ))}
       </div>
 
-      {resetRequests.length > 0 && (
-         <div className="bg-orange-50 rounded-xl border border-orange-200 p-4">
-           <h2 className="font-bold text-orange-900 mb-2 flex items-center"><AlertTriangle size={16} className="mr-2"/> Resets de Senha Pendentes</h2>
-           {resetRequests.map(u => (
-             <div key={u.id} className="flex justify-between items-center bg-white p-2 rounded border border-orange-100 mb-2">
-                <span className="text-sm">{u.name} ({u.email})</span>
-                <button onClick={() => onApproveReset(u.id)} className="text-xs bg-orange-600 text-white px-2 py-1 rounded">Aprovar</button>
-             </div>
-           ))}
-         </div>
+      {tab === 'HOME' && (
+        <div className="grid md:grid-cols-2 gap-6 animate-fade-in">
+          <div className="bg-white p-8 rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-all">
+            <h3 className="font-bold text-lg mb-4 flex items-center text-slate-900"><Info className="mr-2 text-citi-600"/> Regras Importantes</h3>
+            <p className="text-sm text-slate-600 leading-relaxed mb-4">Solicitações devem ser enviadas com no mínimo 15 dias de antecedência do evento.</p>
+            <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 text-xs text-blue-800">
+                <strong>Dica:</strong> Para a Modalidade II, tenha em mãos o comprovante do Comitê de Ética.
+            </div>
+          </div>
+          <div className="bg-slate-900 p-8 rounded-2xl text-white shadow-xl">
+            <h3 className="font-bold text-lg mb-4 flex items-center text-citi-500"><DollarSign className="mr-2"/> Itens Reembolsáveis</h3>
+            <ul className="text-[11px] space-y-3 opacity-90">
+              {REIMBURSABLE_ITEMS.map((item, i) => <li key={i} className="flex items-start gap-2"><CheckCircle size={14} className="mt-0.5 text-citi-500 shrink-0"/> {item}</li>)}
+            </ul>
+          </div>
+        </div>
       )}
 
-      <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-gray-50 font-bold text-gray-700"><tr><th className="px-6 py-3">Nome</th><th className="px-6 py-3">Evento</th><th className="px-6 py-3">Status</th><th className="px-6 py-3 text-right">Ações</th></tr></thead>
-          <tbody className="divide-y">
-            {requests.map(req => (
-              <tr key={req.id}>
-                <td className="px-6 py-4">{req.employeeInputName}</td>
-                <td className="px-6 py-4">{req.eventName}</td>
-                <td className="px-6 py-4"><StatusBadge status={req.status} /></td>
-                <td className="px-6 py-4 text-right">
-                  <button onClick={() => setSelectedRequest(req)} className="text-citi-600 hover:bg-blue-50 p-1 rounded mr-2"><Eye size={18} /></button>
-                  <button onClick={() => setDeleteConfirmId(req.id)} className="text-red-500 hover:bg-red-50 p-1 rounded"><Trash2 size={18} /></button>
-                </td>
+      {tab === 'NEW' && (
+        <form onSubmit={handleSubmit} className="max-w-3xl mx-auto bg-white p-8 sm:p-10 rounded-2xl border shadow-xl space-y-8 animate-fade-in">
+          <div className="pb-4 border-b">
+              <h2 className="text-2xl font-bold text-slate-800">Formulário de Solicitação</h2>
+              <p className="text-slate-500 text-sm">Preencha os dados do evento e anexe os documentos.</p>
+          </div>
+          
+          <div className="grid grid-cols-2 gap-4">
+            <button type="button" onClick={()=>setForm({...form, mod: Modality.I})} className={`p-5 border-2 rounded-xl text-left transition-all ${form.mod===Modality.I?'border-citi-600 bg-blue-50 ring-1 ring-citi-600':'border-slate-100 hover:border-slate-300'}`}>
+              <p className="font-bold text-sm text-citi-900">Modalidade I</p>
+              <p className="text-[10px] text-slate-500 mt-1">Sem publicação imediata</p>
+            </button>
+            <button type="button" onClick={()=>setForm({...form, mod: Modality.II})} className={`p-5 border-2 rounded-xl text-left transition-all ${form.mod===Modality.II?'border-citi-600 bg-blue-50 ring-1 ring-citi-600':'border-slate-100 hover:border-slate-300'}`}>
+              <p className="font-bold text-sm text-citi-900">Modalidade II</p>
+              <p className="text-[10px] text-slate-500 mt-1">Com publicação em revista</p>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+            <div className="space-y-1"><label className="text-xs font-bold text-slate-600 ml-1">Nome Completo</label><input required className="w-full p-3 border rounded-xl text-sm focus:ring-2 focus:ring-citi-500 outline-none" value={form.name} onChange={e=>setForm({...form, name:e.target.value})}/></div>
+            <div className="space-y-1"><label className="text-xs font-bold text-slate-600 ml-1">Cargo</label><input required className="w-full p-3 border rounded-xl text-sm focus:ring-2 focus:ring-citi-500 outline-none" value={form.role} onChange={e=>setForm({...form, role:e.target.value})}/></div>
+            <div className="space-y-1 sm:col-span-2"><label className="text-xs font-bold text-slate-600 ml-1">Nome do Evento</label><input required className="w-full p-3 border rounded-xl text-sm focus:ring-2 focus:ring-citi-500 outline-none" value={form.event} onChange={e=>setForm({...form, event:e.target.value})}/></div>
+            <div className="space-y-1"><label className="text-xs font-bold text-slate-600 ml-1">Data do Evento</label><input required type="date" className="w-full p-3 border rounded-xl text-sm focus:ring-2 focus:ring-citi-500 outline-none" value={form.date} onChange={e=>setForm({...form, date:e.target.value})}/></div>
+            <div className="space-y-1"><label className="text-xs font-bold text-slate-600 ml-1">Valor Inscrição (R$)</label><input required className="w-full p-3 border rounded-xl text-sm focus:ring-2 focus:ring-citi-500 outline-none" value={form.val} onChange={e=>setForm({...form, val:e.target.value})}/></div>
+          </div>
+          
+          <div className="space-y-4 pt-6 border-t border-slate-100">
+            <div>
+              <label className="text-xs font-bold block mb-2 text-slate-700 uppercase tracking-wide">Resumo do Trabalho (PDF)</label>
+              <input required type="file" accept=".pdf" className="text-xs w-full text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-citi-50 file:text-citi-700 hover:file:bg-citi-100" onChange={e=>setForm({...form, sumFile: e.target.files?.[0] || null})}/>
+            </div>
+            {form.mod === Modality.II && (
+              <div className="p-5 bg-amber-50 border border-amber-100 rounded-xl mt-4">
+                <label className="text-xs font-bold block mb-2 text-amber-900 uppercase tracking-wide">Comitê de Ética / Plataforma Brasil</label>
+                <input required type="file" accept=".pdf" className="text-xs w-full text-amber-600 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-amber-100 file:text-amber-800 hover:file:bg-amber-200" onChange={e=>setForm({...form, ethicsFile: e.target.files?.[0] || null})}/>
+              </div>
+            )}
+          </div>
+          <button disabled={loading} className="w-full bg-citi-600 text-white py-4 rounded-xl font-bold hover:bg-citi-700 transition-all disabled:bg-slate-200 shadow-lg shadow-citi-500/20">
+            {loading ? <span className="flex items-center justify-center gap-2"><Loader2 className="animate-spin"/> Enviando...</span> : 'Enviar Solicitação'}
+          </button>
+        </form>
+      )}
+
+      {tab === 'ACC' && (
+          <div className="max-w-2xl mx-auto bg-white p-8 rounded-2xl border shadow-lg space-y-6 animate-fade-in">
+              <h2 className="text-xl font-bold text-slate-800">Prestação de Contas</h2>
+              <p className="text-xs text-slate-500">Envie os comprovantes apenas para solicitações já aprovadas.</p>
+              
+              <div className="space-y-2">
+                  <label className="text-xs font-bold">Selecione a Solicitação</label>
+                  <select className="w-full p-3 border rounded-xl text-sm" value={accRequest} onChange={e=>setAccRequest(e.target.value)}>
+                      <option value="">Selecione...</option>
+                      {requests.filter(r => r.status === RequestStatus.APPROVED || r.status === RequestStatus.PENDING_ACCOUNTABILITY).map(r => (
+                          <option key={r.id} value={r.id}>{r.eventName} - {new Date(r.eventDate).toLocaleDateString()}</option>
+                      ))}
+                  </select>
+              </div>
+
+              {accRequest && (
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold">Anexar Comprovantes (Notas Fiscais, Certificados)</label>
+                    <input type="file" multiple className="w-full text-xs" onChange={e => e.target.files && setAccFiles(Array.from(e.target.files))}/>
+                    <div className="mt-2 space-y-1">
+                        {accFiles.map((f, i) => <div key={i} className="text-[10px] bg-slate-100 p-1 px-2 rounded">{f.name}</div>)}
+                    </div>
+                  </div>
+              )}
+
+              <button disabled={loading || !accRequest} onClick={handleAccountabilitySubmit} className="w-full bg-green-600 text-white py-3 rounded-xl font-bold hover:bg-green-700 disabled:bg-slate-200">
+                  {loading ? 'Enviando...' : 'Enviar Prestação de Contas'}
+              </button>
+          </div>
+      )}
+
+      {tab === 'HIST' && (
+        <div className="space-y-4 animate-fade-in">
+          {requests.map(r => (
+            <div key={r.id} className="bg-white p-6 rounded-2xl border border-slate-100 flex justify-between items-center shadow-sm hover:shadow-md transition-all">
+              <div>
+                <span className={`text-[9px] font-bold px-2 py-0.5 rounded uppercase tracking-wider ${
+                    r.status === RequestStatus.APPROVED ? 'bg-green-100 text-green-700' :
+                    r.status === RequestStatus.REJECTED ? 'bg-red-100 text-red-700' :
+                    r.status === RequestStatus.COMPLETED ? 'bg-blue-100 text-blue-700' :
+                    'bg-slate-100 text-slate-500'
+                }`}>{r.status}</span>
+                <h4 className="font-bold text-slate-800 mt-2 text-sm">{r.eventName}</h4>
+                <p className="text-[10px] text-slate-400 mt-1">{new Date(r.eventDate).toLocaleDateString()} • {r.modality}</p>
+              </div>
+              <div className="text-right">
+                 <div className="font-bold text-citi-600">R$ {r.registrationValue}</div>
+                 <div className="text-[10px] text-slate-300 mt-1">ID: {r.id.slice(-4)}</div>
+              </div>
+            </div>
+          ))}
+          {requests.length === 0 && <p className="text-center py-12 text-slate-400 italic bg-slate-50 rounded-2xl border border-dashed border-slate-200">Nenhum pedido encontrado no histórico.</p>}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const AdminView: React.FC<{ requests: AidRequest[], onUpdate: (id: string, s: RequestStatus, r?: AidRequest) => void }> = ({ requests, onUpdate }) => {
+  const [sel, setSel] = useState<AidRequest | null>(null);
+
+  const approve = async (r: AidRequest, comm: 'SCI' | 'ADM') => {
+    const up = { ...r };
+    if (comm === 'SCI') up.scientificApproved = true; else up.adminApproved = true;
+    
+    // Se ambos aprovarem, muda status para Aprovado
+    if (up.scientificApproved && up.adminApproved) {
+      onUpdate(r.id, RequestStatus.APPROVED, up);
+      await api.sendEmail(r.employeeInputName, "Auxílio Aprovado - CITI", `Parabéns! Sua solicitação para ${r.eventName} foi aprovada pelos comitês Científico e Administrativo.\n\nPróximo passo: Participe do evento e envie a prestação de contas.`);
+    } else {
+      await api.saveRequest(up);
+    }
+    setSel(null);
+  };
+
+  const handleStatusChange = async (newStatus: RequestStatus) => {
+      if(!sel) return;
+      onUpdate(sel.id, newStatus);
+      
+      let msg = "";
+      if(newStatus === RequestStatus.WAITING_REIMBURSEMENT) msg = "Sua prestação de contas foi aprovada. O reembolso entrou na fila de pagamento.";
+      if(newStatus === RequestStatus.COMPLETED) msg = "O reembolso foi efetuado e o processo foi finalizado.";
+      
+      if(msg) await api.sendEmail(sel.employeeInputName, "Atualização do Pedido - CITI", msg);
+      setSel(null);
+  };
+
+  return (
+    <div className="space-y-8">
+      {/* Cards de Resumo */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+        <div className="bg-white p-6 rounded-2xl border border-l-4 border-l-amber-400 shadow-sm">
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Pendentes</p>
+          <p className="text-3xl font-bold text-slate-800 mt-1">{requests.filter(r=>r.status===RequestStatus.PENDING_APPROVAL).length}</p>
+        </div>
+        <div className="bg-white p-6 rounded-2xl border border-l-4 border-l-blue-400 shadow-sm">
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Prestação Contas</p>
+          <p className="text-3xl font-bold text-slate-800 mt-1">{requests.filter(r=>r.status===RequestStatus.ACCOUNTABILITY_REVIEW).length}</p>
+        </div>
+        <div className="bg-white p-6 rounded-2xl border border-l-4 border-l-emerald-400 shadow-sm">
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Finalizados</p>
+          <p className="text-3xl font-bold text-slate-800 mt-1">{requests.filter(r=>r.status===RequestStatus.COMPLETED).length}</p>
+        </div>
+      </div>
+
+      {/* Tabela */}
+      <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-xl">
+        <table className="w-full text-left text-xs">
+          <thead className="bg-slate-50 border-b border-slate-100">
+            <tr><th className="p-4 text-slate-500 font-bold uppercase">Colaborador</th><th className="p-4 text-slate-500 font-bold uppercase">Evento</th><th className="p-4 text-slate-500 font-bold uppercase">Status</th><th className="p-4"></th></tr>
+          </thead>
+          <tbody className="divide-y divide-slate-50">
+            {requests.map(r => (
+              <tr key={r.id} className="hover:bg-slate-50 transition-colors">
+                <td className="p-4 font-bold text-slate-700">{r.employeeInputName}</td>
+                <td className="p-4 text-slate-500">{r.eventName}</td>
+                <td className="p-4"><span className={`px-2 py-1 rounded font-bold uppercase text-[9px] tracking-wide ${
+                    r.status === RequestStatus.APPROVED ? 'bg-green-100 text-green-700' :
+                    r.status === RequestStatus.PENDING_APPROVAL ? 'bg-amber-100 text-amber-700' : 
+                    'bg-slate-100 text-slate-500'
+                }`}>{r.status}</span></td>
+                <td className="p-4 text-right"><button onClick={()=>setSel(r)} className="p-2 bg-white border rounded-lg text-citi-600 hover:bg-citi-50 hover:border-citi-200 transition-all shadow-sm"><Eye size={16}/></button></td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      {/* Delete Confirmation Modal - Always renders if ID is set */}
-      {deleteConfirmId && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
-          <div className="bg-white rounded-lg p-6 max-w-sm w-full mx-4 shadow-xl">
-             <div className="flex flex-col items-center text-center">
-                <div className="bg-red-100 p-3 rounded-full mb-4">
-                  <AlertTriangle className="text-red-600 w-8 h-8" />
-                </div>
-                <h3 className="text-lg font-bold text-gray-900 mb-2">Confirmar Exclusão</h3>
-                <p className="text-gray-600 mb-6 text-sm">Tem certeza? Todos os arquivos anexados a esta solicitação serão apagados permanentemente do servidor.</p>
-                <div className="flex gap-3 w-full">
-                  <button onClick={() => setDeleteConfirmId(null)} className="flex-1 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium">Cancelar</button>
-                  <button onClick={() => { onDelete(deleteConfirmId); setDeleteConfirmId(null); setSelectedRequest(null); }} className="flex-1 py-2 bg-red-600 rounded-lg text-white hover:bg-red-700 font-medium">Excluir</button>
-                </div>
-             </div>
-          </div>
-        </div>
-      )}
-
-      {selectedRequest && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 relative">
-            <div className="flex justify-between mb-4"><h3 className="text-xl font-bold">Detalhes</h3><button onClick={() => setSelectedRequest(null)}><XCircle /></button></div>
+      {/* Modal de Detalhes */}
+      {sel && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white p-8 rounded-3xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl relative">
+            <button onClick={()=>setSel(null)} className="absolute top-6 right-6 text-slate-300 hover:text-red-500 transition-colors"><XCircle size={24}/></button>
+            <h3 className="text-xl font-bold mb-1 text-slate-900">{sel.eventName}</h3>
+            <p className="text-xs text-slate-400 mb-6 font-medium uppercase tracking-wide">Detalhes da Solicitação</p>
             
-            {/* Warning for Modality II */}
-            {selectedRequest.status === RequestStatus.PENDING_APPROVAL && checkForModalityIIWarning(selectedRequest) && (
-              <div className="mb-4 bg-yellow-50 border border-yellow-200 p-4 rounded-lg flex items-start">
-                 <AlertTriangle className="text-yellow-600 w-5 h-5 mr-3 flex-shrink-0 mt-0.5" />
-                 <div>
-                   <h4 className="font-bold text-yellow-800 text-sm">Verificação Obrigatória - Modalidade II</h4>
-                   <p className="text-yellow-700 text-sm mt-1">Este colaborador já utilizou o auxílio Modalidade II anteriormente. Verifique se o artigo científico referente ao auxílio anterior foi publicado antes de aprovar este novo pedido.</p>
-                 </div>
+            <div className="grid grid-cols-2 gap-4 text-[11px] bg-slate-50 p-5 rounded-2xl mb-6 border border-slate-100">
+              <div><p className="text-slate-400 uppercase font-bold mb-1">Solicitante</p><p className="font-bold text-slate-800">{sel.employeeInputName}</p></div>
+              <div><p className="text-slate-400 uppercase font-bold mb-1">Valor</p><p className="font-bold text-emerald-600 text-sm">R$ {sel.registrationValue}</p></div>
+              <div><p className="text-slate-400 uppercase font-bold mb-1">Modalidade</p><p className="font-bold text-slate-800">{sel.modality}</p></div>
+              <div><p className="text-slate-400 uppercase font-bold mb-1">Data</p><p className="font-bold text-slate-800">{new Date(sel.eventDate).toLocaleDateString()}</p></div>
+            </div>
+
+            {/* Ações de Aprovação Inicial */}
+            {sel.status === RequestStatus.PENDING_APPROVAL && (
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                <button onClick={()=>approve(sel, 'SCI')} className={`p-4 border-2 rounded-2xl flex flex-col items-center gap-2 transition-all ${sel.scientificApproved?'border-green-500 bg-green-50 text-green-700':'border-slate-100 hover:border-slate-300'}`}>
+                   {sel.scientificApproved ? <CheckCircle size={20}/> : <Award size={20} className="text-slate-300"/>}
+                   <span className="font-bold text-[10px] uppercase">Científico</span>
+                </button>
+                <button onClick={()=>approve(sel, 'ADM')} className={`p-4 border-2 rounded-2xl flex flex-col items-center gap-2 transition-all ${sel.adminApproved?'border-green-500 bg-green-50 text-green-700':'border-slate-100 hover:border-slate-300'}`}>
+                   {sel.adminApproved ? <CheckCircle size={20}/> : <ShieldCheck size={20} className="text-slate-300"/>}
+                   <span className="font-bold text-[10px] uppercase">Administrativo</span>
+                </button>
               </div>
             )}
 
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded">
-                <div><label className="text-xs text-gray-500">Solicitante</label><div className="font-bold">{selectedRequest.employeeInputName}</div></div>
-                <div><label className="text-xs text-gray-500">Evento</label><div className="font-bold">{selectedRequest.eventName}</div></div>
-                <div><label className="text-xs text-gray-500">Modalidade</label><div>{selectedRequest.modality}</div></div>
-                <div><label className="text-xs text-gray-500">Data</label><div>{new Date(selectedRequest.eventDate).toLocaleDateString()}</div></div>
-              </div>
-              
-              <div><h4 className="font-bold mb-2">Documentos</h4>
-                {selectedRequest.documents.map((d,i) => <div key={i} className="text-sm bg-gray-100 p-2 rounded mb-1 flex justify-between">{d.name} <button onClick={() => handleDownload(d)} className="text-blue-600 hover:underline flex items-center"><Download size={14} className="mr-1"/> Baixar</button></div>)}
-              </div>
-              
-              {selectedRequest.accountabilityDocuments.length > 0 && (
-                <div><h4 className="font-bold mb-2 text-emerald-700">Prestação de Contas</h4>
-                  {selectedRequest.accountabilityDocuments.map((d,i) => <div key={i} className="text-sm bg-emerald-50 p-2 rounded mb-1 flex justify-between">{d.name} <button onClick={() => handleDownload(d)} className="text-emerald-600 hover:underline flex items-center"><Download size={14} className="mr-1"/> Baixar</button></div>)}
-                </div>
-              )}
-              
-              <div className="flex gap-2 pt-4 border-t items-center">
-                {selectedRequest.status === RequestStatus.PENDING_APPROVAL && (
-                  <>
-                    <button onClick={() => { onUpdateStatus(selectedRequest.id, RequestStatus.APPROVED); setSelectedRequest(null); }} className="flex-1 bg-green-600 text-white py-2 rounded font-bold">Aprovar</button>
-                    <button onClick={() => { onUpdateStatus(selectedRequest.id, RequestStatus.REJECTED); setSelectedRequest(null); }} className="flex-1 bg-red-600 text-white py-2 rounded font-bold">Recusar</button>
-                  </>
-                )}
-                {(selectedRequest.status === RequestStatus.ACCOUNTABILITY_REVIEW) && (
-                   <button onClick={() => { onUpdateStatus(selectedRequest.id, RequestStatus.COMPLETED); setSelectedRequest(null); }} className="flex-1 bg-citi-600 text-white py-2 rounded font-bold">Aprovar Contas & Finalizar</button>
-                )}
-                
-                {/* Delete Button inside Modal - triggers confirmation */}
-                <button 
-                  onClick={() => setDeleteConfirmId(selectedRequest.id)} 
-                  className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded ml-2" 
-                  title="Excluir Solicitação"
-                >
-                  <Trash2 size={20} />
-                </button>
+            {/* Ações de Prestação de Contas */}
+            {sel.status === RequestStatus.ACCOUNTABILITY_REVIEW && (
+                 <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 mb-6 text-center">
+                     <p className="text-xs text-blue-800 mb-3 font-medium">O colaborador enviou os documentos de prestação de contas. Se estiverem corretos, aprove para liberar o reembolso.</p>
+                     <button onClick={()=>handleStatusChange(RequestStatus.WAITING_REIMBURSEMENT)} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-xs font-bold w-full hover:bg-blue-700">Aprovar Contas e Liberar Pagamento</button>
+                 </div>
+            )}
+
+             {/* Ações de Finalização */}
+             {sel.status === RequestStatus.WAITING_REIMBURSEMENT && (
+                 <div className="bg-purple-50 p-4 rounded-xl border border-purple-100 mb-6 text-center">
+                     <p className="text-xs text-purple-800 mb-3 font-medium">O financeiro deve realizar o pagamento. Após confirmado, finalize o processo.</p>
+                     <button onClick={()=>handleStatusChange(RequestStatus.COMPLETED)} className="bg-purple-600 text-white px-4 py-2 rounded-lg text-xs font-bold w-full hover:bg-purple-700">Confirmar Pagamento e Finalizar</button>
+                 </div>
+            )}
+
+            <div className="border-t border-slate-100 pt-4">
+              <p className="text-[10px] font-bold text-slate-400 uppercase mb-3 tracking-widest">Documentos Anexados</p>
+              <div className="space-y-2">
+                {[...sel.documents, ...(sel.ethicsCommitteeProof ? [sel.ethicsCommitteeProof] : []), ...(sel.accountabilityDocuments || [])].map((d,i)=>(
+                    <a key={i} href={d.url} target="_blank" className="flex justify-between items-center p-3 bg-slate-50 rounded-xl hover:bg-slate-100 transition-colors border border-transparent hover:border-slate-200">
+                    <div className="flex items-center gap-3">
+                        <FileText size={14} className="text-citi-600"/>
+                        <span className="font-bold text-xs text-slate-700 truncate max-w-[200px]">{d.name}</span>
+                    </div>
+                    <span className="text-[9px] font-bold text-citi-600 uppercase bg-white px-2 py-1 rounded border border-slate-200">Abrir</span>
+                    </a>
+                ))}
               </div>
             </div>
           </div>
@@ -886,104 +515,87 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users, onUpda
 };
 
 // ==========================================
-// 5. APLICAÇÃO PRINCIPAL
+// 4. APLICAÇÃO PRINCIPAL (ROTEAMENTO E AUTH)
 // ==========================================
 
-const App: React.FC = () => {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [requests, setRequests] = useState<AidRequest[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshTrigger, setRefreshTrigger] = useState(0); 
+export default function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [reqs, setReqs] = useState<AidRequest[]>([]);
+  const [load, setLoad] = useState(true);
 
+  // Carrega dados iniciais
   useEffect(() => {
-    const loadData = async () => {
-      setLoading(true);
-      try {
-        const [fetchedRequests, fetchedUsers] = await Promise.all([api.getRequests(), api.getUsers()]);
-        setRequests(fetchedRequests);
-        setUsers(fetchedUsers);
-      } catch (e) { console.error("Failed to load data", e); } 
-      finally { setLoading(false); }
+    const init = async () => {
+        const r = await api.getRequests();
+        setReqs(r);
+        setLoad(false);
     };
-    loadData();
-  }, [refreshTrigger]);
+    init();
+  }, []);
 
-  const refreshData = () => setRefreshTrigger(prev => prev + 1);
-  const handleLogin = (user: User) => setCurrentUser(user);
-  const handleLogout = () => setCurrentUser(null);
-
-  const handleRegisterUser = (name: string, email: string, pass: string) => {
-    const existingUser = users.find(u => u.email === email);
-    if (existingUser) {
-      if (!existingUser.password) {
-         const updatedUser = { ...existingUser, password: pass, name: name, resetRequested: false };
-         api.saveUser(updatedUser).then(refreshData);
-         setCurrentUser(updatedUser);
-         return { success: true, message: 'Senha redefinida com sucesso!' };
-      }
-      return { success: false, message: 'Este e-mail já está cadastrado.' };
-    }
-    const newUser: User = { id: `emp-${Date.now()}`, name, email, role: UserRole.EMPLOYEE, password: pass, department: 'Geral' };
-    api.saveUser(newUser).then(refreshData);
-    setCurrentUser(newUser);
-    return { success: true, message: 'Cadastro realizado com sucesso!' };
+  // Login Simples
+  const handleLogin = async (email: string, pass: string) => {
+    const users = await api.getUsers();
+    const u = users.find(x => x.email === email && x.password === pass);
+    if (u) setUser(u); else alert("Erro: E-mail ou senha incorretos.");
   };
 
-  const handleVerifyCredentials = (email: string, pass: string) => {
-    const user = users.find(u => u.email === email && u.password === pass);
-    if (user) {
-      if (user.role === UserRole.EMPLOYEE && user.resetRequested) return { success: false, message: 'Redefinição pendente.' };
-      return { success: true, user, message: 'Login OK.' };
-    }
-    return { success: false, message: 'Dados incorretos.' };
+  // Cadastro Simples
+  const handleReg = async (name: string, email: string, pass: string) => {
+    const u: User = { id: Date.now().toString(), name, email, role: UserRole.EMPLOYEE, password: pass };
+    await api.saveUser(u);
+    setUser(u);
   };
 
-  const handlePasswordResetRequest = (email: string) => {
-    const user = users.find(u => u.email === email);
-    if (user) { api.saveUser({ ...user, resetRequested: true }).then(refreshData); return true; }
-    return false;
-  };
-
-  const handleAdminResetApprove = (userId: string) => {
-    const user = users.find(u => u.id === userId);
-    if (user) api.saveUser({ ...user, password: '', resetRequested: false }).then(() => { refreshData(); alert("Redefinição aprovada."); });
-  };
-
-  const handleNewRequest = (newReqData: any) => {
-    api.saveRequest({ ...newReqData, id: `req-${Date.now()}`, status: RequestStatus.PENDING_APPROVAL, submissionDate: new Date().toISOString(), accountabilityDocuments: [], employeeName: currentUser?.name || 'Unknown' })
-       .then(() => { refreshData(); alert("Enviado com sucesso!"); });
-  };
-
-  const handleAccountabilitySubmit = (reqId: string, docs: SimpleFile[]) => {
-    const req = requests.find(r => r.id === reqId);
-    if (req) api.saveRequest({ ...req, status: RequestStatus.ACCOUNTABILITY_REVIEW, accountabilityDocuments: docs }).then(() => { refreshData(); alert("Contas enviadas!"); });
-  };
-
-  const handleAdminStatusUpdate = (id: string, newStatus: RequestStatus) => {
-    const req = requests.find(r => r.id === id);
-    if (req) api.saveRequest({ ...req, status: newStatus }).then(refreshData);
-  };
-
-  const handleDeleteRequest = (id: string) => api.deleteRequest(id).then(refreshData);
-
-  if (loading && !currentUser) return <div className="min-h-screen flex items-center justify-center bg-gray-50"><Loader2 className="h-10 w-10 text-citi-600 animate-spin" /></div>;
+  if (load) return <div className="h-screen flex items-center justify-center bg-slate-50 flex-col gap-4"><Loader2 className="animate-spin text-citi-600" size={48}/><span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Carregando Sistema...</span></div>;
 
   return (
-    <MainLayout user={currentUser} onLogout={handleLogout}>
-      {!currentUser ? (
-        <Login onLogin={handleLogin} onRegister={handleRegisterUser} onVerify={handleVerifyCredentials} onRequestReset={handlePasswordResetRequest} />
-      ) : (
-        <div className="w-full">
-          {currentUser.role === UserRole.EMPLOYEE ? (
-            <EmployeeDashboard employeeId={currentUser.id} requests={requests} onRequestSubmit={handleNewRequest} onAccountabilitySubmit={handleAccountabilitySubmit} />
-          ) : (
-            <AdminDashboard requests={requests} users={users} onUpdateStatus={handleAdminStatusUpdate} onDelete={handleDeleteRequest} onApproveReset={handleAdminResetApprove} />
-          )}
+    <Layout user={user} onLogout={()=>setUser(null)}>
+      {!user ? (
+        <div className="max-w-md mx-auto mt-20 bg-white p-10 rounded-3xl shadow-2xl border border-slate-100 relative overflow-hidden animate-fade-in">
+          <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-citi-600 to-citi-500"></div>
+          <div className="mb-8 text-center">
+             <div className="h-16 w-16 bg-citi-600 rounded-2xl flex items-center justify-center text-white font-bold text-3xl shadow-lg mx-auto mb-4">C</div>
+             <h2 className="text-2xl font-bold text-slate-900">Portal de Auxílios</h2>
+             <p className="text-slate-500 text-sm mt-1">Faça login para gerenciar suas solicitações</p>
+          </div>
+          
+          <form onSubmit={e => { e.preventDefault(); const f=new FormData(e.currentTarget); handleLogin(f.get('e') as string, f.get('p') as string); }} className="space-y-4">
+            <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-600 ml-1">E-mail Profissional</label>
+                <input required name="e" type="email" className="w-full p-4 border rounded-2xl outline-none focus:ring-2 focus:ring-citi-500 bg-slate-50 focus:bg-white transition-all"/>
+            </div>
+            <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-600 ml-1">Senha</label>
+                <input required name="p" type="password" className="w-full p-4 border rounded-2xl outline-none focus:ring-2 focus:ring-citi-500 bg-slate-50 focus:bg-white transition-all"/>
+            </div>
+            <button className="w-full bg-citi-600 text-white py-4 rounded-2xl font-bold shadow-xl shadow-citi-500/20 hover:bg-citi-700 transition-all transform hover:scale-[1.02]">Entrar no Sistema</button>
+            
+            <div className="flex justify-between pt-4 border-t border-slate-100 mt-6">
+                <button type="button" onClick={() => { 
+                const n = prompt("Nome Completo:"); 
+                const e = prompt("E-mail:"); 
+                const p = prompt("Crie uma Senha:"); 
+                if(n && e && p) handleReg(n,e,p);
+                }} className="text-xs text-citi-600 font-bold hover:underline">Criar Nova Conta</button>
+                
+                <button type="button" onClick={() => {
+                const p = prompt("Senha Administrativa:");
+                if(p==='citiadminciti') setUser({id:'adm', name:'Gestão CITI', email:'adm@citi.com', role:UserRole.ADMIN});
+                }} className="text-[10px] text-slate-400 uppercase font-bold hover:text-slate-600">Acesso Gestor</button>
+            </div>
+          </form>
         </div>
+      ) : user.role === UserRole.EMPLOYEE ? (
+        <EmployeeView user={user} requests={reqs.filter(r=>r.employeeId===user.id)} onRefresh={() => api.getRequests().then(setReqs)}/>
+      ) : (
+        <AdminView requests={reqs} onUpdate={async (id, s, r) => {
+          if(r) await api.saveRequest(r);
+          const current = reqs.find(x => x.id === id);
+          if(current) await api.saveRequest({...current, status: s});
+          api.getRequests().then(setReqs);
+        }}/>
       )}
-    </MainLayout>
+    </Layout>
   );
-};
-
-export default App;
+}
