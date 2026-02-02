@@ -20,8 +20,10 @@ import { createClient } from '@supabase/supabase-js';
 //    VITE_SUPABASE_URL
 //    VITE_SUPABASE_ANON_KEY
 
-const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL;
-const supabaseKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY;
+// Safely access env vars to avoid crashes if import.meta.env is undefined
+const env = (import.meta as any).env || {};
+const supabaseUrl = env.VITE_SUPABASE_URL;
+const supabaseKey = env.VITE_SUPABASE_ANON_KEY;
 
 export const supabase = (supabaseUrl && supabaseKey) 
   ? createClient(supabaseUrl, supabaseKey) 

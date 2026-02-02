@@ -1,7 +1,7 @@
+
 import React, { useState } from 'react';
 import { User, UserRole } from '../types';
-import { MOCK_USER } from '../constants';
-import { Lock, User as UserIcon, Mail, ArrowRight, UserPlus, HelpCircle, CheckCircle } from 'lucide-react';
+import { Lock, User as UserIcon, Mail, ShieldCheck, HelpCircle, CheckCircle } from 'lucide-react';
 
 interface LoginProps {
   onLogin: (user: User) => void;
@@ -12,337 +12,65 @@ interface LoginProps {
 
 export const Login: React.FC<LoginProps> = ({ onLogin, onRegister, onVerify, onRequestReset }) => {
   const [activeTab, setActiveTab] = useState<'LOGIN' | 'REGISTER' | 'ADMIN' | 'RESET'>('LOGIN');
-  
-  // Form States
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
-  
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  const clearForm = () => {
-    setEmail('');
-    setPassword('');
-    setName('');
-    setAdminPassword('');
-    setError('');
-    setSuccessMsg('');
-  };
-
-  const switchTab = (tab: 'LOGIN' | 'REGISTER' | 'ADMIN' | 'RESET') => {
-    setActiveTab(tab);
-    clearForm();
-  };
-
-  const handleEmailLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    const result = onVerify(email, password);
-    if (result.success && result.user) {
-      onLogin(result.user);
-    } else {
-      setError(result.message);
-    }
-  };
-
   const handleRegister = (e: React.FormEvent) => {
     e.preventDefault();
-    if (password.length < 6) {
-      setError('A senha deve ter no mínimo 6 caracteres.');
-      return;
-    }
+    if (password.length < 6) return setError('A senha deve ter no mínimo 6 caracteres.');
     const result = onRegister(name, email, password);
-    if (result.success) {
-       // Registration handles auto-login inside App.tsx logic usually
-    } else {
-      setError(result.message);
-    }
-  };
-
-  const handleResetRequest = (e: React.FormEvent) => {
-    e.preventDefault();
-    const sent = onRequestReset(email);
-    if (sent) {
-      setSuccessMsg('Solicitação enviada! O administrador foi notificado.');
-      setError('');
-    } else {
-      setError('E-mail não encontrado na base de dados.');
-    }
-  };
-
-  const handleAdminLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (adminPassword === 'citiadminciti') {
-      onLogin({
-        id: 'admin-01',
-        name: 'Gestão CITI',
-        email: 'admin@citi.com',
-        role: UserRole.ADMIN
-      });
-    } else {
-      setError('Senha de administrador incorreta.');
-    }
+    if (!result.success) setError(result.message);
   };
 
   return (
     <div className="flex flex-col items-center justify-center py-12 px-4 sm:px-6 lg:px-8 animate-fade-in min-h-[80vh]">
-      <div className="mb-8">
-        <img 
-          src="/citi-logo.png" 
-          alt="CITI Medicina Reprodutiva" 
-          className="h-24 w-auto object-contain mx-auto"
-          onError={(e) => { e.currentTarget.style.display = 'none'; }}
-        />
-      </div>
-      
-      <div className="max-w-md w-full space-y-8 bg-white p-8 rounded-xl shadow-xl border border-gray-100 relative overflow-hidden">
-        {/* Decorative top bar */}
-        <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-citi-900 via-citi-600 to-citi-accent"></div>
-
+      <div className="max-w-md w-full space-y-8 bg-white p-8 rounded-xl shadow-xl border border-gray-100 relative">
+        <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-citi-900 to-citi-600"></div>
+        
         <div className="text-center pt-2">
           <h2 className="text-3xl font-bold text-citi-900">
-            {activeTab === 'REGISTER' ? 'Criar Conta' : 
-             activeTab === 'RESET' ? 'Recuperar Senha' : 'Bem-vindo'}
+            {activeTab === 'REGISTER' ? 'Criar Conta' : 'Bem-vindo'}
           </h2>
-          <p className="mt-2 text-sm text-gray-600">
-            {activeTab === 'RESET' 
-              ? 'Informe seu e-mail para solicitar a redefinição.' 
-              : <span>Acesse o portal do <span className="font-semibold text-citi-600">Programa de Auxílios</span>.</span>}
-          </p>
+          <p className="mt-2 text-sm text-gray-600">Programa de Auxílios CITI</p>
         </div>
 
-        {/* Tab Navigation */}
         <div className="flex bg-gray-100 p-1 rounded-lg">
-          <button
-            onClick={() => switchTab('LOGIN')}
-            className={`flex-1 py-2 text-xs sm:text-sm font-medium rounded-md transition-all ${
-              activeTab === 'LOGIN' || activeTab === 'RESET' ? 'bg-white shadow text-citi-900' : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Login
-          </button>
-           <button
-            onClick={() => switchTab('REGISTER')}
-            className={`flex-1 py-2 text-xs sm:text-sm font-medium rounded-md transition-all ${
-              activeTab === 'REGISTER' ? 'bg-white shadow text-citi-900' : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Primeiro Acesso
-          </button>
-          <button
-            onClick={() => switchTab('ADMIN')}
-            className={`flex-1 py-2 text-xs sm:text-sm font-medium rounded-md transition-all ${
-              activeTab === 'ADMIN' ? 'bg-white shadow text-citi-900' : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Admin
-          </button>
+          <button onClick={() => setActiveTab('LOGIN')} className={`flex-1 py-2 text-sm font-medium rounded-md ${activeTab === 'LOGIN' ? 'bg-white shadow text-citi-900' : 'text-gray-500'}`}>Login</button>
+          <button onClick={() => setActiveTab('REGISTER')} className={`flex-1 py-2 text-sm font-medium rounded-md ${activeTab === 'REGISTER' ? 'bg-white shadow text-citi-900' : 'text-gray-500'}`}>Cadastro</button>
+          <button onClick={() => setActiveTab('ADMIN')} className={`flex-1 py-2 text-sm font-medium rounded-md ${activeTab === 'ADMIN' ? 'bg-white shadow text-citi-900' : 'text-gray-500'}`}>Admin</button>
         </div>
 
-        {/* === LOGIN TAB === */}
-        {(activeTab === 'LOGIN') && (
-          <div className="space-y-4 pt-4">
-            <form onSubmit={handleEmailLogin} className="space-y-4">
-               <div>
-                <label className="block text-sm font-medium text-gray-700">Email</label>
-                <div className="mt-1 relative rounded-md shadow-sm">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Mail className="h-5 w-5 text-gray-400" />
-                  </div>
-                  <input
-                    type="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900"
-                    placeholder="seu.email@citi.com"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Senha</label>
-                <div className="mt-1 relative rounded-md shadow-sm">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Lock className="h-5 w-5 text-gray-400" />
-                  </div>
-                  <input
-                    type="password"
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900"
-                    placeholder="••••••"
-                  />
-                </div>
-              </div>
-
-              {error && <div className="text-red-500 text-sm text-center font-medium bg-red-50 p-2 rounded">{error}</div>}
-
-              <button
-                type="submit"
-                className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-citi-600 hover:bg-citi-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-citi-500 transition-colors"
-              >
-                Entrar
-              </button>
-            </form>
-
-            <div className="text-center mt-2">
-              <button 
-                onClick={() => switchTab('RESET')}
-                className="text-sm text-citi-600 hover:text-citi-800 hover:underline flex items-center justify-center mx-auto"
-              >
-                <HelpCircle size={14} className="mr-1" /> Esqueceu a senha?
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* === REGISTER TAB === */}
         {activeTab === 'REGISTER' && (
           <form onSubmit={handleRegister} className="space-y-4 pt-4">
-             <div>
-                <label className="block text-sm font-medium text-gray-700">Nome Completo</label>
-                <div className="mt-1 relative rounded-md shadow-sm">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <UserIcon className="h-5 w-5 text-gray-400" />
-                  </div>
-                  <input
-                    type="text"
-                    required
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900"
-                    placeholder="Dr. Nome Sobrenome"
-                  />
-                </div>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Email</label>
-                <div className="mt-1 relative rounded-md shadow-sm">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Mail className="h-5 w-5 text-gray-400" />
-                  </div>
-                  <input
-                    type="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900"
-                    placeholder="seu.email@citi.com"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Criar Senha</label>
-                <div className="mt-1 relative rounded-md shadow-sm">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Lock className="h-5 w-5 text-gray-400" />
-                  </div>
-                  <input
-                    type="password"
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900"
-                    placeholder="Mínimo 6 caracteres"
-                  />
-                </div>
-              </div>
-
-              {error && <div className="text-red-500 text-sm text-center font-medium bg-red-50 p-2 rounded">{error}</div>}
-
-              <button
-                type="submit"
-                className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors"
-              >
-                Cadastrar e Acessar
-              </button>
-          </form>
-        )}
-
-        {/* === RESET PASSWORD TAB === */}
-        {activeTab === 'RESET' && (
-          <form onSubmit={handleResetRequest} className="space-y-6 pt-4">
-             {!successMsg ? (
-               <>
-                <div className="bg-blue-50 p-4 rounded-lg text-sm text-blue-800 border border-blue-200">
-                  Caso tenha perdido o acesso, o administrador precisará autorizar a criação de uma nova senha. Suas solicitações e histórico <strong>serão preservados</strong>.
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">Email Cadastrado</label>
-                  <div className="mt-1 relative rounded-md shadow-sm">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <Mail className="h-5 w-5 text-gray-400" />
-                    </div>
-                    <input
-                      type="email"
-                      required
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900"
-                      placeholder="seu.email@citi.com"
-                    />
-                  </div>
-                </div>
-
-                {error && <div className="text-red-500 text-sm text-center font-medium">{error}</div>}
-
-                <button
-                  type="submit"
-                  className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-citi-600 hover:bg-citi-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-citi-500 transition-colors"
-                >
-                  Solicitar Redefinição
-                </button>
-               </>
-             ) : (
-               <div className="text-center py-6">
-                 <CheckCircle className="mx-auto h-12 w-12 text-green-500 mb-4" />
-                 <h3 className="text-lg font-bold text-gray-900">Solicitação Enviada</h3>
-                 <p className="text-gray-500 mt-2">{successMsg}</p>
-                 <button 
-                  type="button"
-                  onClick={() => switchTab('LOGIN')}
-                  className="mt-6 text-citi-600 hover:underline font-medium"
-                 >
-                   Voltar para Login
-                 </button>
-               </div>
-             )}
-          </form>
-        )}
-
-        {/* === ADMIN TAB === */}
-        {activeTab === 'ADMIN' && (
-          <form onSubmit={handleAdminLogin} className="space-y-6 pt-4">
+            <input required type="text" value={name} onChange={e => setName(e.target.value)} className="w-full px-3 py-3 border rounded-lg" placeholder="Nome Completo" />
+            <input required type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full px-3 py-3 border rounded-lg" placeholder="E-mail profissional" />
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-                Senha de Acesso
-              </label>
-              <div className="mt-1 relative rounded-md shadow-sm">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Lock className="h-5 w-5 text-gray-400" />
-                </div>
-                <input
-                  type="password"
-                  value={adminPassword}
-                  onChange={(e) => setAdminPassword(e.target.value)}
-                  className="focus:ring-citi-500 focus:border-citi-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-lg py-3 border bg-white text-gray-900"
-                  placeholder="Digite a senha administrativa"
-                />
-              </div>
+              <input required type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full px-3 py-3 border rounded-lg" placeholder="Criar Senha" />
+              <p className="mt-2 text-xs text-gray-500 flex items-start">
+                <ShieldCheck size={14} className="mr-1 mt-0.5 text-citi-600" />
+                Crie uma senha diferente das que você utiliza em serviços importantes, proteja os seus dados contra vazamentos.
+              </p>
             </div>
+            <button type="submit" className="w-full bg-green-600 text-white py-3 rounded-lg font-bold">Cadastrar e Acessar</button>
+          </form>
+        )}
 
-            {error && <div className="text-red-500 text-sm text-center font-medium">{error}</div>}
+        {activeTab === 'LOGIN' && (
+          <form onSubmit={e => { e.preventDefault(); const res = onVerify(email, password); if(res.success && res.user) onLogin(res.user); else setError(res.message); }} className="space-y-4 pt-4">
+            <input required type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full px-3 py-3 border rounded-lg" placeholder="E-mail" />
+            <input required type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full px-3 py-3 border rounded-lg" placeholder="Senha" />
+            <button type="submit" className="w-full bg-citi-600 text-white py-3 rounded-lg font-bold">Acessar</button>
+          </form>
+        )}
 
-            <button
-              type="submit"
-              className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-citi-900 hover:bg-citi-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-citi-500 transition-colors"
-            >
-              Acessar Painel
-            </button>
+        {activeTab === 'ADMIN' && (
+          <form onSubmit={e => { e.preventDefault(); if(adminPassword === 'citiadminciti') onLogin({id:'admin', name:'Admin', email:'admin@citi.com', role:UserRole.ADMIN}); else setError('Senha incorreta'); }} className="space-y-4 pt-4">
+            <input required type="password" value={adminPassword} onChange={e => setAdminPassword(e.target.value)} className="w-full px-3 py-3 border rounded-lg" placeholder="Senha Administrativa" />
+            <button type="submit" className="w-full bg-gray-900 text-white py-3 rounded-lg font-bold">Acessar Painel</button>
           </form>
         )}
       </div>
