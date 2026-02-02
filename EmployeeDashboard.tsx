@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { FileText, Upload, History, AlertCircle, CheckCircle, Plus, ChevronRight, Download, Link as LinkIcon, Image as ImageIcon, Award, DollarSign, Trash2 } from 'lucide-react';
+import { FileText, Upload, History, AlertCircle, CheckCircle, Plus, ChevronRight, Download, Link as LinkIcon, Image as ImageIcon, Award, DollarSign, Trash2, Loader2 } from 'lucide-react';
 import { AidRequest, Modality, RequestStatus, SimpleFile } from '../types';
 import { RULES } from '../constants';
+import { api } from '../services/api';
 
 interface EmployeeDashboardProps {
   requests: AidRequest[];
@@ -35,6 +36,20 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
     new Date(r.submissionDate).getFullYear() === currentYear &&
     (r.status === RequestStatus.APPROVED || r.status === RequestStatus.COMPLETED || r.status === RequestStatus.ACCOUNTABILITY_REVIEW || r.status === RequestStatus.PENDING_ACCOUNTABILITY)
   );
+
+  // Helper to handle upload
+  const handleFileUpload = async (file: File): Promise<SimpleFile> => {
+    // 1. Upload to Supabase Bucket
+    const url = await api.uploadFile(file);
+    
+    // 2. Return the file object with the URL
+    return {
+      name: file.name,
+      size: (file.size / 1024 / 1024).toFixed(2) + 'MB',
+      date: new Date().toISOString(),
+      url: url
+    };
+  };
 
   // Sub-components for cleaner file
   const Home = () => (
@@ -94,20 +109,18 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
     });
 
     const [dateError, setDateError] = useState<string | null>(null);
+    const [uploading, setUploading] = useState(false);
 
     // Validate date whenever it changes
     useEffect(() => {
       if (formData.eventDate) {
         const today = new Date();
-        // Reset time to midnight for accurate day comparison
         today.setHours(0, 0, 0, 0);
         
         const eventDate = new Date(formData.eventDate);
         eventDate.setHours(0, 0, 0, 0);
         
-        // Difference in milliseconds
         const diffTime = eventDate.getTime() - today.getTime();
-        // Difference in days
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
         if (diffDays < 15) {
@@ -148,29 +161,34 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
       setView('HISTORY');
     };
 
-    const handleSummaryFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleSummaryFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files.length > 0) {
-        setFormData({
-          ...formData, 
-          summaryFile: {
-            name: "Resumo: " + e.target.files[0].name,
-            size: '1.5MB', 
-            date: new Date().toISOString()
-          }
-        });
+        setUploading(true);
+        try {
+          const uploadedFile = await handleFileUpload(e.target.files[0]);
+          // Override name to be semantic
+          uploadedFile.name = "Resumo: " + e.target.files[0].name;
+          setFormData({ ...formData, summaryFile: uploadedFile });
+        } catch (err) {
+          alert("Erro ao enviar arquivo: " + err);
+        } finally {
+          setUploading(false);
+        }
       }
     };
 
-    const handleParamsFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleParamsFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files.length > 0) {
-        setFormData({
-          ...formData, 
-          paramsFile: {
-            name: "Params: " + e.target.files[0].name,
-            size: '1.0MB', 
-            date: new Date().toISOString()
-          }
-        });
+        setUploading(true);
+        try {
+          const uploadedFile = await handleFileUpload(e.target.files[0]);
+          uploadedFile.name = "Params: " + e.target.files[0].name;
+          setFormData({ ...formData, paramsFile: uploadedFile });
+        } catch (err) {
+          alert("Erro ao enviar arquivo: " + err);
+        } finally {
+          setUploading(false);
+        }
       }
     };
 
@@ -288,10 +306,15 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
                     id="summary-upload" 
                     className="hidden" 
                     onChange={handleSummaryFileChange}
-                    disabled={isBlocked}
+                    disabled={isBlocked || uploading}
                   />
-                  <label htmlFor="summary-upload" className={`cursor-pointer flex flex-col items-center justify-center ${isBlocked ? 'cursor-not-allowed opacity-50' : ''}`}>
-                    {formData.summaryFile ? (
+                  <label htmlFor="summary-upload" className={`cursor-pointer flex flex-col items-center justify-center ${isBlocked || uploading ? 'cursor-not-allowed opacity-50' : ''}`}>
+                    {uploading ? (
+                      <div className="flex flex-col items-center text-citi-600">
+                        <Loader2 className="animate-spin w-8 h-8 mb-1" />
+                        <span className="text-xs">Enviando...</span>
+                      </div>
+                    ) : formData.summaryFile ? (
                       <div className="flex items-center text-green-700">
                          <CheckCircle className="mr-2 w-5 h-5"/>
                          <span className="text-sm font-medium">{formData.summaryFile.name}</span>
@@ -343,11 +366,13 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
                       <input 
                         type="file"
                         required={!formData.paramsFile}
-                        disabled={isBlocked}
+                        disabled={isBlocked || uploading}
                         className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-citi-50 file:text-citi-700 hover:file:bg-citi-100"
                         onChange={handleParamsFileChange}
                       />
-                      {formData.paramsFile && <div className="text-xs text-green-600 mt-1 pl-2">{formData.paramsFile.name} selecionado</div>}
+                      {uploading ? (
+                         <span className="text-xs text-citi-600 pl-2">Enviando...</span>
+                      ) : formData.paramsFile && <div className="text-xs text-green-600 mt-1 pl-2">{formData.paramsFile.name} selecionado</div>}
                    </div>
                  )}
               </div>
@@ -355,10 +380,10 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
               <div className="pt-4">
                 <button 
                   type="submit" 
-                  disabled={isBlocked || !!dateError || !formData.employeeInputName || !formData.summaryFile}
+                  disabled={isBlocked || !!dateError || !formData.employeeInputName || !formData.summaryFile || uploading}
                   className="w-full bg-citi-600 text-white py-3 rounded-lg font-bold hover:bg-citi-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed shadow-md"
                 >
-                  Enviar Solicitação
+                  {uploading ? "Aguarde o envio dos arquivos..." : "Enviar Solicitação"}
                 </button>
               </div>
             </form>
@@ -399,6 +424,7 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
   const AccountabilityView = () => {
     const pendingAccountability = myRequests.filter(r => r.status === RequestStatus.APPROVED || r.status === RequestStatus.PENDING_ACCOUNTABILITY);
     const [selectedId, setSelectedId] = useState<string>("");
+    const [uploading, setUploading] = useState(false);
     
     // Separate states for required documents
     const [accFiles, setAccFiles] = useState<{
@@ -416,7 +442,6 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
     const handleSubmit = (e: React.FormEvent) => {
       e.preventDefault();
       if(selectedId) {
-        // Merge all files into one array for the system backend
         const allFiles: SimpleFile[] = [];
         if (accFiles.participation) allFiles.push(accFiles.participation);
         if (accFiles.presentation) allFiles.push(accFiles.presentation);
@@ -428,31 +453,45 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
       }
     };
 
-    const handleSingleFileChange = (field: 'participation' | 'presentation' | 'photo', e: React.ChangeEvent<HTMLInputElement>, prefix: string) => {
+    const handleSingleFileChange = async (field: 'participation' | 'presentation' | 'photo', e: React.ChangeEvent<HTMLInputElement>, prefix: string) => {
       if (e.target.files && e.target.files.length > 0) {
-        setAccFiles(prev => ({
-          ...prev,
-          [field]: {
-            name: `${prefix}: ` + e.target.files![0].name,
-            size: '1.2MB',
-            date: new Date().toISOString()
-          }
-        }));
+        setUploading(true);
+        try {
+          const uploadedFile = await handleFileUpload(e.target.files[0]);
+          // Override name
+          uploadedFile.name = `${prefix}: ` + e.target.files![0].name;
+          
+          setAccFiles(prev => ({
+            ...prev,
+            [field]: uploadedFile
+          }));
+        } catch (err) {
+          alert("Erro no upload: " + err);
+        } finally {
+          setUploading(false);
+        }
       }
     };
 
-    const handleReceiptsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleReceiptsChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
        if (e.target.files && e.target.files.length > 0) {
-         // Fix: Explicitly type 'f' as any to avoid "Property 'name' does not exist on type 'unknown'" error due to Array.from inference
-         const newFiles: SimpleFile[] = Array.from(e.target.files).map((f: any) => ({
-            name: "Recibo: " + f.name,
-            size: '0.8MB',
-            date: new Date().toISOString()
-         }));
-         setAccFiles(prev => ({
-           ...prev,
-           receipts: [...prev.receipts, ...newFiles]
-         }));
+         setUploading(true);
+         try {
+           const newFiles = await Promise.all(Array.from(e.target.files).map(async (f) => {
+             const uploaded = await handleFileUpload(f);
+             uploaded.name = "Recibo: " + f.name;
+             return uploaded;
+           }));
+
+           setAccFiles(prev => ({
+             ...prev,
+             receipts: [...prev.receipts, ...newFiles]
+           }));
+         } catch(err) {
+            alert("Erro no upload dos recibos: " + err);
+         } finally {
+            setUploading(false);
+         }
        }
     };
 
@@ -535,10 +574,11 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
                    type="file" 
                    id="upload-participation" 
                    className="hidden" 
+                   disabled={uploading}
                    onChange={(e) => handleSingleFileChange('participation', e, 'Cert. Part')}
                  />
                  <label htmlFor="upload-participation" className="cursor-pointer flex flex-col items-center">
-                    {accFiles.participation ? (
+                    {uploading ? <Loader2 className="animate-spin text-citi-600" /> : accFiles.participation ? (
                       <div className="text-green-600 flex items-center text-sm font-medium">
                         <CheckCircle size={16} className="mr-2" />
                         {accFiles.participation.name.split(': ')[1]}
@@ -566,10 +606,11 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
                    type="file" 
                    id="upload-presentation" 
                    className="hidden" 
+                   disabled={uploading}
                    onChange={(e) => handleSingleFileChange('presentation', e, 'Cert. Apres')}
                  />
                  <label htmlFor="upload-presentation" className="cursor-pointer flex flex-col items-center">
-                    {accFiles.presentation ? (
+                    {uploading ? <Loader2 className="animate-spin text-citi-600" /> : accFiles.presentation ? (
                       <div className="text-green-600 flex items-center text-sm font-medium">
                         <CheckCircle size={16} className="mr-2" />
                         {accFiles.presentation.name.split(': ')[1]}
@@ -598,10 +639,11 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
                    id="upload-photo" 
                    accept="image/*"
                    className="hidden" 
+                   disabled={uploading}
                    onChange={(e) => handleSingleFileChange('photo', e, 'Foto')}
                  />
                  <label htmlFor="upload-photo" className="cursor-pointer flex flex-col items-center">
-                    {accFiles.photo ? (
+                    {uploading ? <Loader2 className="animate-spin text-citi-600" /> : accFiles.photo ? (
                       <div className="text-green-600 flex items-center text-sm font-medium">
                         <CheckCircle size={16} className="mr-2" />
                         {accFiles.photo.name.split(': ')[1]}
@@ -630,12 +672,13 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
                    id="upload-receipts" 
                    multiple
                    className="hidden" 
+                   disabled={uploading}
                    onChange={handleReceiptsChange}
                  />
                  <label htmlFor="upload-receipts" className="cursor-pointer flex flex-col items-center mb-2">
                     <div className="flex items-center text-citi-600 hover:text-citi-800">
-                       <Plus size={16} className="mr-1" />
-                       <span className="text-xs font-bold">Adicionar Arquivos</span>
+                       {uploading ? <Loader2 className="animate-spin mr-1" /> : <Plus size={16} className="mr-1" />}
+                       <span className="text-xs font-bold">{uploading ? "Enviando..." : "Adicionar Arquivos"}</span>
                     </div>
                  </label>
                  
@@ -657,10 +700,10 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
 
           <button 
             type="submit"
-            disabled={!isFormValid}
+            disabled={!isFormValid || uploading}
             className="w-full bg-emerald-600 text-white py-4 rounded-lg font-bold hover:bg-emerald-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed shadow-md text-lg mt-6"
           >
-            Enviar Prestação de Contas
+            {uploading ? "Enviando arquivos..." : "Enviar Prestação de Contas"}
           </button>
         </form>
       </div>
@@ -701,8 +744,8 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
                  
                  <div className="mt-4 md:mt-0 flex gap-2">
                     {req.documents.length > 0 && (
-                      <button className="flex items-center text-xs bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded text-gray-700">
-                        <Download size={14} className="mr-1"/> Documentos
+                      <button className="flex items-center text-xs bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded text-gray-700 cursor-default">
+                        <CheckCircle size={14} className="mr-1 text-green-600"/> Arquivos Enviados
                       </button>
                     )}
                  </div>

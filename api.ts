@@ -2,7 +2,6 @@ import { supabase, isSupabaseConnected } from '../lib/supabase';
 import { AidRequest, User } from '../types';
 import { INITIAL_REQUESTS, MOCK_USER } from '../constants';
 
-// Keys for LocalStorage fallback
 const LS_REQUESTS_KEY = 'citi_requests';
 const LS_USERS_KEY = 'citi_users';
 
@@ -13,11 +12,9 @@ export const api = {
     if (isSupabaseConnected && supabase) {
       const { data, error } = await supabase.from('users').select('content');
       if (!error && data) {
-        // Map jsonb content back to User objects
         return data.map((row: any) => row.content) as User[];
       }
     }
-    // Fallback LocalStorage
     const saved = localStorage.getItem(LS_USERS_KEY);
     return saved ? JSON.parse(saved) : [MOCK_USER];
   },
@@ -31,9 +28,7 @@ export const api = {
       if (error) console.error("Error saving user to DB:", error);
     }
     
-    // Always sync to LocalStorage as cache/backup or primary
     const current = await api.getUsers();
-    // Check if exists locally to avoid duplicates if mixing modes
     const exists = current.find(u => u.id === user.id);
     let updated = current;
     if (exists) {
@@ -57,7 +52,6 @@ export const api = {
         return data.map((row: any) => row.content) as AidRequest[];
       }
     }
-    // Fallback
     const saved = localStorage.getItem(LS_REQUESTS_KEY);
     return saved ? JSON.parse(saved) : INITIAL_REQUESTS;
   },
@@ -77,7 +71,7 @@ export const api = {
     if (exists) {
       updated = current.map(r => r.id === req.id ? req : r);
     } else {
-      updated = [req, ...current]; // Prepend for new
+      updated = [req, ...current];
     }
     localStorage.setItem(LS_REQUESTS_KEY, JSON.stringify(updated));
   },
@@ -90,5 +84,35 @@ export const api = {
     const current = await api.getRequests();
     const updated = current.filter(r => r.id !== id);
     localStorage.setItem(LS_REQUESTS_KEY, JSON.stringify(updated));
+  },
+
+  // --- STORAGE ---
+  async uploadFile(file: File): Promise<string> {
+    if (!isSupabaseConnected || !supabase) {
+      console.warn("Supabase não conectado. Simulando upload local (sem persistência real de arquivo).");
+      return URL.createObjectURL(file);
+    }
+
+    // Cria um nome único: timestamp_nome-do-arquivo
+    // Remove caracteres especiais para evitar erros na URL
+    const sanitizedName = file.name.replace(/[^a-zA-Z0-9.]/g, '_');
+    const fileName = `${Date.now()}_${sanitizedName}`;
+    
+    // Upload para o bucket 'documentos'
+    const { data, error } = await supabase.storage
+      .from('documentos')
+      .upload(fileName, file);
+
+    if (error) {
+      console.error("Erro no upload:", error);
+      throw new Error("Falha ao fazer upload do arquivo. Verifique se o Bucket 'documentos' existe e é público.");
+    }
+
+    // Pega a URL pública
+    const { data: urlData } = supabase.storage
+      .from('documentos')
+      .getPublicUrl(fileName);
+
+    return urlData.publicUrl;
   }
 };

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Download, CheckCircle, XCircle, Trash2, Eye, FileText, AlertTriangle, MapPin, Link as LinkIcon, Lock } from 'lucide-react';
-import { AidRequest, RequestStatus, User, UserRole } from '../types';
+import { AidRequest, RequestStatus, User, UserRole, SimpleFile } from '../types';
 
 interface AdminDashboardProps {
   requests: AidRequest[];
@@ -21,9 +21,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users,
   // Reset Requests
   const resetRequests = users.filter(u => u.resetRequested && u.role === UserRole.EMPLOYEE);
 
-  const handleDownload = (fileName: string) => {
-    // Simulation of download
-    alert(`Iniciando download simulado de: ${fileName}`);
+  const handleDownload = (file: SimpleFile) => {
+    if (file.url) {
+      // Abre o link do Supabase Storage em nova aba (o navegador fará o download)
+      window.open(file.url, '_blank');
+    } else {
+      alert("Erro: Este arquivo não possui um link válido (pode ter sido enviado antes da atualização do sistema).");
+    }
   };
 
   const StatusBadge = ({ status }: { status: RequestStatus }) => {
@@ -234,7 +238,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users,
                       <li key={i} className="flex justify-between items-center bg-gray-50 p-3 rounded text-sm border border-gray-100">
                         <span className="text-gray-700 truncate mr-2">{doc.name}</span>
                         <button 
-                          onClick={() => handleDownload(doc.name)}
+                          onClick={() => handleDownload(doc)}
                           className="text-citi-600 hover:text-citi-800 font-medium text-xs flex items-center whitespace-nowrap"
                         >
                           <Download size={14} className="mr-1" /> Baixar
@@ -257,7 +261,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users,
                      <li key={i} className="flex justify-between items-center bg-emerald-50 p-3 rounded text-sm border border-emerald-100">
                        <span className="text-gray-700 truncate mr-2">{doc.name}</span>
                        <button 
-                         onClick={() => handleDownload(doc.name)}
+                         onClick={() => handleDownload(doc)}
                          className="text-emerald-600 hover:text-emerald-800 font-medium text-xs flex items-center whitespace-nowrap"
                        >
                          <Download size={14} className="mr-1" /> Baixar

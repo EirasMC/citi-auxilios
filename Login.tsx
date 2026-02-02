@@ -36,11 +36,6 @@ export const Login: React.FC<LoginProps> = ({ onLogin, onRegister, onVerify, onR
     clearForm();
   };
 
-  const handleGoogleLogin = () => {
-    // Simulating Google Auth
-    onLogin(MOCK_USER);
-  };
-
   const handleEmailLogin = (e: React.FormEvent) => {
     e.preventDefault();
     const result = onVerify(email, password);
@@ -59,9 +54,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin, onRegister, onVerify, onR
     }
     const result = onRegister(name, email, password);
     if (result.success) {
-       // Registration handles auto-login inside App.tsx usually, but if not:
-       // If it returns success, the App component usually updates the state and logs in.
-       // We can just set a message in case of edge cases.
+       // Registration handles auto-login inside App.tsx logic usually
     } else {
       setError(result.message);
     }
@@ -147,28 +140,9 @@ export const Login: React.FC<LoginProps> = ({ onLogin, onRegister, onVerify, onR
           </button>
         </div>
 
-        {/* Content based on Active Tab */}
-        
         {/* === LOGIN TAB === */}
         {(activeTab === 'LOGIN') && (
           <div className="space-y-4 pt-4">
-             <button
-              onClick={handleGoogleLogin}
-              className="w-full flex justify-center items-center py-3 px-4 border border-gray-300 rounded-lg shadow-sm bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-            >
-              <img src="https://www.svgrepo.com/show/475656/google-color.svg" className="h-5 w-5 mr-2" alt="Google" />
-              Entrar com Google
-            </button>
-            
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-300" />
-              </div>
-              <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-white text-gray-500">Ou use seu email</span>
-              </div>
-            </div>
-
             <form onSubmit={handleEmailLogin} className="space-y-4">
                <div>
                 <label className="block text-sm font-medium text-gray-700">Email</label>
