@@ -1,11 +1,49 @@
 import React, { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
+import emailjs from '@emailjs/browser'; // Certifique-se de instalar: npm install @emailjs/browser
 import { 
   LogOut, User as UserIcon, Database, HardDrive, Loader2, 
   Lock, Mail, UserPlus, HelpCircle, CheckCircle,
   FileText, Upload, History, AlertCircle, Plus, ChevronRight, Download, 
   Award, DollarSign, Trash2, XCircle, Eye, AlertTriangle, ShieldCheck, CheckSquare
 } from 'lucide-react';
+
+// ==========================================
+// CONFIGURAÇÃO EMAILJS (PREENCHA AQUI)
+// ==========================================
+const EMAILJS_SERVICE_ID = "service_rhz6qt7"; // Ex: service_xxxxx
+const EMAILJS_TEMPLATE_ID = "template_r556fxl"; // Ex: template_xxxxx
+const EMAILJS_PUBLIC_KEY = "illya2ue7-bVytDx-"; // Ex: user_xxxxx
+
+// Função auxiliar de envio de e-mail
+const sendEmailNotification = async (
+  toName: string, 
+  toEmail: string, 
+  eventName: string, 
+  newStatus: string
+) => {
+  if (!EMAILJS_SERVICE_ID || EMAILJS_SERVICE_ID === "SEU_SERVICE_ID_AQUI") {
+    console.warn("EmailJS não configurado no código. O e-mail não será enviado.");
+    return;
+  }
+
+  const templateParams = {
+    to_name: toName,
+    to_email: toEmail,
+    event_name: eventName,
+    new_status: newStatus,
+    // O e-mail pesquisaciti@gmail.com deve ser configurado como CC ou BCC 
+    // diretamente no Template do Painel do EmailJS para garantir o recebimento,
+    // ou adicionado no campo 'To Email' do template: {{to_email}}, pesquisaciti@gmail.com
+  };
+
+  try {
+    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, templateParams, EMAILJS_PUBLIC_KEY);
+    console.log("E-mail enviado com sucesso para", toEmail);
+  } catch (error) {
+    console.error("Erro ao enviar e-mail:", error);
+  }
+};
 
 // ==========================================
 // 1. DEFINIÇÕES DE TIPOS
@@ -21,7 +59,7 @@ export interface User {
   name: string;
   email: string;
   role: UserRole;
-  department?: string; // Mantido para compatibilidade
+  department?: string; 
   password?: string;
   resetRequested?: boolean;
 }
@@ -33,11 +71,11 @@ export enum Modality {
 
 export enum RequestStatus {
   PENDING_APPROVAL = 'Pendente Aprovação',
-  APPROVED = 'Aprovado', // Só vira Aprovado se Cientifico + Adm aprovarem
+  APPROVED = 'Aprovado', 
   REJECTED = 'Recusado',
   PENDING_ACCOUNTABILITY = 'Aguardando Prestação de Contas',
   ACCOUNTABILITY_REVIEW = 'Análise de Contas',
-  WAITING_REIMBURSEMENT = 'Aguardando Reembolso', // Nova etapa
+  WAITING_REIMBURSEMENT = 'Aguardando Reembolso', 
   COMPLETED = 'Finalizado'
 }
 
@@ -54,14 +92,13 @@ export interface AidRequest {
   employeeId: string;
   employeeName: string;
   
-  // Novos campos solicitados
-  employeeJobTitle: string; // Cargo
-  registrationFee: string;  // Valor inscrição
+  employeeJobTitle: string; 
+  registrationFee: string;  
   
   employeeInputName: string;
   eventName: string;
   eventLocation: string;
-  eventDate: string; // Data limite submissão
+  eventDate: string; 
   
   eventParamsText?: string;
   modality: Modality;
@@ -71,7 +108,6 @@ export interface AidRequest {
   documents: SimpleFile[];
   accountabilityDocuments: SimpleFile[];
   
-  // Controle de aprovação dupla
   scientificApproved?: boolean;
   adminApproved?: boolean;
   
@@ -332,8 +368,11 @@ const Login: React.FC<LoginProps> = ({ onLogin, onRegister, onVerify, onRequestR
   const [adminPassword, setAdminPassword] = useState('');
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  
+  // State para o Checkbox de Segurança
+  const [securityChecked, setSecurityChecked] = useState(false);
 
-  const clearForm = () => { setEmail(''); setPassword(''); setName(''); setAdminPassword(''); setError(''); setSuccessMsg(''); };
+  const clearForm = () => { setEmail(''); setPassword(''); setName(''); setAdminPassword(''); setError(''); setSuccessMsg(''); setSecurityChecked(false); };
   const switchTab = (tab: any) => { setActiveTab(tab); clearForm(); };
   
   const handleEmailLogin = (e: React.FormEvent) => {
@@ -345,6 +384,7 @@ const Login: React.FC<LoginProps> = ({ onLogin, onRegister, onVerify, onRequestR
 
   const handleRegister = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!securityChecked) { setError("Você deve concordar com o aviso de segurança."); return; }
     if (password.length < 6) { setError('A senha deve ter no mínimo 6 caracteres.'); return; }
     const result = onRegister(name, email, password);
     if (!result.success) setError(result.message);
@@ -394,17 +434,39 @@ const Login: React.FC<LoginProps> = ({ onLogin, onRegister, onVerify, onRequestR
         )}
         {activeTab === 'REGISTER' && (
           <form onSubmit={handleRegister} className="space-y-4 pt-4">
-             {/* 1º Alteração: Remover placeholder "Dr. Nome" */}
              <div><label className="block text-sm font-medium text-gray-700">Nome Completo</label><input type="text" required value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1 border rounded-lg py-3 px-3" placeholder="Nome Sobrenome" /></div>
              <div><label className="block text-sm font-medium text-gray-700">Email</label><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="w-full mt-1 border rounded-lg py-3 px-3" /></div>
              <div>
                <label className="block text-sm font-medium text-gray-700">Senha</label>
                <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className="w-full mt-1 border rounded-lg py-3 px-3" />
-               {/* 12º Alteração: Dica de senha */}
-               <p className="text-xs text-gray-500 mt-1 flex items-center"><ShieldCheck size={12} className="mr-1"/> Crie uma senha diferente das que utiliza em outros serviços importantes. Proteja seus dados.</p>
+               
+               {/* 1º Alteração: Aviso de segurança e Checkbox */}
+               <div className="mt-3 bg-red-50 border border-red-200 p-3 rounded-lg text-xs text-red-900 leading-relaxed">
+                  <span className="font-bold text-red-600">Atenção:</span> esse é um site de uso interno, que possui menos camadas de segurança, portanto, crie uma <span className="font-bold">senha exclusiva para esse site</span>, diferente da que você costuma usar em serviços importantes.
+               </div>
+               
+               <div className="mt-3 flex items-start gap-2">
+                 <div className="flex items-center h-5">
+                   <input
+                    id="security-check"
+                    name="security-check"
+                    type="checkbox"
+                    required
+                    checked={securityChecked}
+                    onChange={(e) => setSecurityChecked(e.target.checked)}
+                    className="h-4 w-4 text-citi-600 border-gray-300 rounded focus:ring-citi-500"
+                   />
+                 </div>
+                 <div className="ml-1 text-sm">
+                   <label htmlFor="security-check" className="font-medium text-gray-700 cursor-pointer">
+                     Li e compreendi a informação de segurança.
+                   </label>
+                 </div>
+               </div>
              </div>
              {error && <div className="text-red-500 text-sm text-center font-medium bg-red-50 p-2 rounded">{error}</div>}
-             <button type="submit" className="w-full flex justify-center py-3 px-4 rounded-lg text-white bg-green-600 hover:bg-green-700">Cadastrar</button>
+             {/* Botão desabilitado se não checar a caixa */}
+             <button type="submit" disabled={!securityChecked} className="w-full flex justify-center py-3 px-4 rounded-lg text-white bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed">Cadastrar</button>
           </form>
         )}
         {activeTab === 'RESET' && (
@@ -446,7 +508,6 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
   const myRequests = requests.filter(r => r.employeeId === employeeId);
   const currentYear = new Date().getFullYear();
   
-  // Verificação de bloqueio anual
   const hasApprovedModalityI = myRequests.some(r => r.modality === Modality.I && new Date(r.submissionDate).getFullYear() === currentYear && (r.status !== RequestStatus.REJECTED));
   const hasApprovedModalityII = myRequests.some(r => r.modality === Modality.II && new Date(r.submissionDate).getFullYear() === currentYear && (r.status !== RequestStatus.REJECTED));
 
@@ -483,17 +544,17 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
   const RequestForm = () => {
     const [formData, setFormData] = useState({ 
       employeeInputName: '', 
-      employeeJobTitle: '', // 3º Alteração: Cargo
+      employeeJobTitle: '', 
       eventName: '', 
       eventLocation: '', 
       eventDate: '', 
-      registrationFee: '', // 4º Alteração: Valor
+      registrationFee: '', 
       modality: '' as Modality | '', 
       eventParamsType: 'TEXT' as 'TEXT' | 'FILE', 
       eventParamsText: '', 
       summaryFile: null as SimpleFile | null, 
       paramsFile: null as SimpleFile | null,
-      ethicalApprovalFile: null as SimpleFile | null // 8º Alteração: Mod II Comprovante
+      ethicalApprovalFile: null as SimpleFile | null 
     });
     const [dateError, setDateError] = useState<string | null>(null);
     const [uploading, setUploading] = useState(false);
@@ -507,7 +568,6 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
 
     const isBlocked = (formData.modality === Modality.I && hasApprovedModalityI) || (formData.modality === Modality.II && hasApprovedModalityII);
     
-    // 6º Alteração: Validação do campo de formato de submissão
     const isFormatParamsFilled = formData.eventParamsType === 'TEXT' ? (formData.eventParamsText.trim().length > 0) : (!!formData.paramsFile);
 
     const handleSubmit = (e: React.FormEvent) => {
@@ -563,7 +623,6 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
         <div className="flex justify-between items-center mb-6 border-b pb-4"><h2 className="text-2xl font-bold text-citi-900">Nova Solicitação</h2><button onClick={() => setView('HOME')} className="text-gray-500 hover:text-citi-600">Voltar</button></div>
         
-        {/* 11º Alteração: Explicação das Modalidades NO TOPO */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
            <div className={`p-4 border rounded-lg cursor-pointer transition-all ${formData.modality === Modality.I ? 'border-citi-600 bg-blue-50 ring-2 ring-citi-600' : 'border-gray-200 hover:bg-gray-50'}`} onClick={() => setFormData({...formData, modality: Modality.I})}>
               <div className="flex items-center justify-between mb-2">
@@ -593,7 +652,6 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
              <input required disabled={isBlocked} type="text" className="w-full px-3 py-2 border rounded-lg" placeholder="Nome Completo" value={formData.employeeInputName} onChange={e => setFormData({...formData, employeeInputName: e.target.value})} />
-             {/* 3º Alteração: Campo Cargo */}
              <input required disabled={isBlocked} type="text" className="w-full px-3 py-2 border rounded-lg" placeholder="Cargo na Empresa" value={formData.employeeJobTitle} onChange={e => setFormData({...formData, employeeJobTitle: e.target.value})} />
           </div>
 
@@ -603,20 +661,17 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* 2º Alteração: Data intuitiva e label claro */}
               <div>
                 <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Data limite de submissão dos resumos</label>
                 <input required disabled={isBlocked} type="date" className={`w-full px-3 py-2 border rounded-lg ${dateError ? 'border-red-500' : ''}`} value={formData.eventDate} onChange={e => setFormData({...formData, eventDate: e.target.value})} />
                 {dateError && <p className="text-red-600 text-xs mt-1">{dateError}</p>}
               </div>
-              {/* 4º Alteração: Valor Inscrição */}
               <div>
                 <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Valor da Inscrição (R$)</label>
                 <input required disabled={isBlocked} type="text" className="w-full px-3 py-2 border rounded-lg" placeholder="Ex: 500,00" value={formData.registrationFee} onChange={e => setFormData({...formData, registrationFee: e.target.value})} />
               </div>
           </div>
 
-          {/* 7º Alteração: Texto Resumo mais claro */}
           <div className="border-2 border-dashed rounded-lg p-6 text-center hover:bg-gray-50 transition-colors">
              <input required={!formData.summaryFile} type="file" className="hidden" id="sum-file" onChange={e => handleFileChange(e, 'summary')} disabled={isBlocked || uploading} />
              <label htmlFor="sum-file" className="cursor-pointer text-sm text-citi-600 flex flex-col items-center gap-2">
@@ -625,7 +680,6 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
              </label>
           </div>
           
-          {/* 8º Alteração: Campo Específico para Mod II (Ética) */}
           {formData.modality === Modality.II && (
              <div className="border border-blue-200 bg-blue-50 rounded-lg p-4">
                 <label className="block text-sm font-bold text-blue-900 mb-2">Comprovante de aprovação na Plataforma Brasil / Comitê de ética em pesquisa</label>
@@ -634,7 +688,6 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
              </div>
           )}
 
-          {/* 5º Alteração: Campo Formato de Submissão com explicação */}
           <div className="bg-gray-50 p-6 rounded-lg border border-gray-200">
              <label className="block text-sm font-bold text-gray-900 mb-1">Formato de submissão de trabalho exigido pelo evento</label>
              <p className="text-xs text-gray-500 mb-3">
@@ -687,7 +740,6 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
        }
     };
 
-    // 14º Alteração: Garantir upload multiplo (já estava ok, mas reforçado)
     const handleReceipts = async (e: any) => {
        if (e.target.files) {
          setUploading(true);
@@ -708,7 +760,6 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ requests, employe
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 max-w-4xl mx-auto">
         <h2 className="text-2xl font-bold mb-6">Prestação de Contas</h2>
         
-        {/* 13º Alteração: Tabela de Itens Reembolsáveis */}
         <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-lg mb-6">
            <h3 className="font-bold text-emerald-800 flex items-center mb-2"><DollarSign size={16} className="mr-1"/> Itens Passíveis de Reembolso</h3>
            <ul className="text-xs text-emerald-900 list-disc pl-5 space-y-1">
@@ -783,7 +834,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users, onUpda
 
   const pendingCount = requests.filter(r => r.status === RequestStatus.PENDING_APPROVAL).length;
   const accReviewCount = requests.filter(r => r.status === RequestStatus.ACCOUNTABILITY_REVIEW).length;
-  // 10º Alteração: Contar processos aguardando reembolso
   const refundCount = requests.filter(r => r.status === RequestStatus.WAITING_REIMBURSEMENT).length;
   
   const resetRequests = users.filter(u => u.resetRequested && u.role === UserRole.EMPLOYEE);
@@ -817,7 +867,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users, onUpda
     return <span className={`px-2 py-1 rounded-full text-xs font-bold uppercase ${color}`}>{status}</span>;
   };
 
-  // 9º Alteração: Lógica de Aprovação Dupla
+  // 9º Alteração: Lógica de Aprovação Dupla com EmailJS
   const handleApproval = (type: 'SCIENTIFIC' | 'ADMIN') => {
     if (!selectedRequest) return;
     const updates: Partial<AidRequest> = {};
@@ -828,12 +878,20 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users, onUpda
     if (type === 'SCIENTIFIC') { isSci = true; updates.scientificApproved = true; }
     if (type === 'ADMIN') { isAdmin = true; updates.adminApproved = true; }
 
+    const requestOwner = users.find(u => u.id === selectedRequest.employeeId);
+    const ownerEmail = requestOwner?.email || "";
+
     if (isSci && isAdmin) {
       onUpdateStatus(selectedRequest.id, RequestStatus.APPROVED, updates);
+      // Dispara E-mail: APROVADO
+      if (ownerEmail) sendEmailNotification(selectedRequest.employeeName, ownerEmail, selectedRequest.eventName, RequestStatus.APPROVED);
       setSelectedRequest(null);
     } else {
       // Atualiza apenas as flags, mas mantém status Pendente
       onUpdateStatus(selectedRequest.id, RequestStatus.PENDING_APPROVAL, updates);
+      // Opcional: Avisar o usuário que uma das aprovações foi feita? 
+      // Geralmente só avisa quando aprova tudo, mas podemos avisar aqui se quiser.
+      // Por enquanto, só avisa no final para não spammar.
       setSelectedRequest(prev => prev ? ({...prev, ...updates}) : null);
     }
   };
@@ -928,7 +986,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users, onUpda
               <div className="flex gap-2 pt-4 border-t flex-col">
                 {selectedRequest.status === RequestStatus.PENDING_APPROVAL && (
                   <div className="flex gap-2">
-                     {/* 9º Alteração: Botões separados de aprovação */}
                      <button 
                        onClick={() => handleApproval('SCIENTIFIC')} 
                        disabled={selectedRequest.scientificApproved}
@@ -945,19 +1002,37 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, users, onUpda
                        {selectedRequest.adminApproved ? <><CheckCircle size={16} className="mr-2"/> Aprovado (Admin)</> : "Aprovar (Admin)"}
                      </button>
 
-                     <button onClick={() => { onUpdateStatus(selectedRequest.id, RequestStatus.REJECTED); setSelectedRequest(null); }} className="px-4 bg-red-100 text-red-700 hover:bg-red-200 rounded font-bold">Recusar</button>
+                     <button onClick={() => { 
+                         onUpdateStatus(selectedRequest.id, RequestStatus.REJECTED); 
+                         // Email de recusa
+                         const owner = users.find(u => u.id === selectedRequest.employeeId);
+                         if(owner) sendEmailNotification(selectedRequest.employeeName, owner.email, selectedRequest.eventName, RequestStatus.REJECTED);
+                         setSelectedRequest(null); 
+                       }} className="px-4 bg-red-100 text-red-700 hover:bg-red-200 rounded font-bold">Recusar</button>
                   </div>
                 )}
 
-                {/* 10º Alteração: Fluxo de Reembolso */}
+                {/* 10º Alteração: Fluxo de Reembolso + EmailJS */}
                 {(selectedRequest.status === RequestStatus.ACCOUNTABILITY_REVIEW) && (
-                   <button onClick={() => { onUpdateStatus(selectedRequest.id, RequestStatus.WAITING_REIMBURSEMENT); setSelectedRequest(null); }} className="w-full bg-emerald-600 text-white py-3 rounded font-bold hover:bg-emerald-700">
+                   <button onClick={() => { 
+                       onUpdateStatus(selectedRequest.id, RequestStatus.WAITING_REIMBURSEMENT); 
+                       // Email de Status atualizado
+                       const owner = users.find(u => u.id === selectedRequest.employeeId);
+                       if(owner) sendEmailNotification(selectedRequest.employeeName, owner.email, selectedRequest.eventName, RequestStatus.WAITING_REIMBURSEMENT);
+                       setSelectedRequest(null); 
+                     }} className="w-full bg-emerald-600 text-white py-3 rounded font-bold hover:bg-emerald-700">
                       Aprovar Contas & Aguardar Reembolso
                    </button>
                 )}
                 
                 {(selectedRequest.status === RequestStatus.WAITING_REIMBURSEMENT) && (
-                   <button onClick={() => { onUpdateStatus(selectedRequest.id, RequestStatus.COMPLETED); setSelectedRequest(null); }} className="w-full bg-blue-600 text-white py-3 rounded font-bold hover:bg-blue-700">
+                   <button onClick={() => { 
+                       onUpdateStatus(selectedRequest.id, RequestStatus.COMPLETED); 
+                       // Email de Pagamento
+                       const owner = users.find(u => u.id === selectedRequest.employeeId);
+                       if(owner) sendEmailNotification(selectedRequest.employeeName, owner.email, selectedRequest.eventName, "Pagamento Realizado / Finalizado");
+                       setSelectedRequest(null); 
+                     }} className="w-full bg-blue-600 text-white py-3 rounded font-bold hover:bg-blue-700">
                       <DollarSign className="inline mr-2"/> Confirmar Realização do Reembolso (Finalizar)
                    </button>
                 )}
@@ -1035,6 +1110,7 @@ const App: React.FC = () => {
     if (user) api.saveUser({ ...user, password: '', resetRequested: false }).then(refreshData);
   };
 
+  // 2º Alteração: Disparar e-mail na Submissão
   const handleNewRequest = (newReqData: any) => {
     api.saveRequest({ 
       ...newReqData, 
@@ -1045,17 +1121,36 @@ const App: React.FC = () => {
       employeeName: currentUser?.name || 'Unknown',
       scientificApproved: false,
       adminApproved: false
-    }).then(() => { refreshData(); alert("Enviado com sucesso!"); });
+    }).then(() => { 
+        refreshData(); 
+        if (currentUser?.email) {
+          sendEmailNotification(currentUser.name, currentUser.email, newReqData.eventName, "Solicitação Submetida");
+        }
+        alert("Enviado com sucesso!"); 
+    });
   };
 
+  // 2º Alteração: Disparar e-mail na Prestação de Contas
   const handleAccountabilitySubmit = (reqId: string, docs: SimpleFile[]) => {
     const req = requests.find(r => r.id === reqId);
-    if (req) api.saveRequest({ ...req, status: RequestStatus.ACCOUNTABILITY_REVIEW, accountabilityDocuments: docs }).then(() => { refreshData(); alert("Contas enviadas!"); });
+    if (req) {
+        api.saveRequest({ ...req, status: RequestStatus.ACCOUNTABILITY_REVIEW, accountabilityDocuments: docs }).then(() => { 
+            refreshData(); 
+            const owner = users.find(u => u.id === req.employeeId);
+            if (owner) sendEmailNotification(req.employeeName, owner.email, req.eventName, "Prestação de Contas Enviada");
+            alert("Contas enviadas!"); 
+        });
+    }
   };
 
   const handleAdminStatusUpdate = (id: string, newStatus: RequestStatus, updates: Partial<AidRequest> = {}) => {
     const req = requests.find(r => r.id === id);
-    if (req) api.saveRequest({ ...req, ...updates, status: newStatus }).then(refreshData);
+    if (req) {
+        api.saveRequest({ ...req, ...updates, status: newStatus }).then(() => {
+           refreshData();
+           // Nota: O disparo de e-mail para aprovações admin acontece dentro do componente AdminDashboard
+        });
+    }
   };
 
   const handleDeleteRequest = (id: string) => api.deleteRequest(id).then(refreshData);
